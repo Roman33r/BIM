@@ -1,5 +1,5 @@
 import {findElement} from './elements.js';
-import {elementAnchors,elementAxes,add,sub,mul,dot,length} from './transforms.js';
+import {elementAnchors,elementAxes,elementFrame,framePoint,add,sub,mul,dot,length} from './transforms.js';
 import {floorElements,elementVisible} from './selection.js';
 export function snapTargets(floor,excludedId,axes=true,options={}){
  const excluded=new Set(Array.isArray(excludedId)?excludedId:[excludedId]), points=[], lines=[];
@@ -9,6 +9,49 @@ export function snapTargets(floor,excludedId,axes=true,options={}){
   if(axes && options.axisTypes?.[element.kind]!==false) lines.push(...elementAxes(element,host).map(a=>({...a,id:element.id})));
  }
  return {points,lines};
+}
+
+export function snapWallTranslation(wall, otherWalls, dx, dy, tolerance) {
+ const frame=elementFrame(wall), shift={x:dx,y:dy};
+ const sides=f=>[[0,0],[f.w,0],[f.w,f.h],[0,f.h]].map(([x,y])=>framePoint(f,x,y));
+ const moved=sides(frame).map(point=>add(point,shift));
+ const best=[null,null], axes=[frame.u,frame.v];
+ for(const other of otherWalls){
+  const target=elementFrame(other);
+  if(Math.max(Math.abs(dot(frame.u,target.u)),Math.abs(dot(frame.u,target.v)))<1-1e-8)continue;
+  const points=sides(target);
+  const limits=axes.map(axis=>{
+   const coords=points.map(point=>dot(point,axis));
+   return [Math.min(...coords),Math.max(...coords)];
+  });
+  for(const point of moved){
+   axes.forEach((axis,index)=>{
+    const across=dot(point,axes[1-index]);
+    const [low,high]=limits[1-index];
+    const distanceAlongFace=Math.max(0,low-across,across-high);
+    if(distanceAlongFace>Math.max(.65,tolerance*5))return;
+    for(const fixed of limits[index]){
+     const correction=fixed-dot(point,axis);
+     const score=Math.abs(correction)+distanceAlongFace*.02;
+     if(Math.abs(correction)<=tolerance&&(!best[index]||score<best[index].score)){
+      best[index]={correction,score,point:add(point,mul(axis,correction))};
+     }
+    }
+   });
+  }
+ }
+ if(best.every(match=>!match))return null;
+ let aligned=shift;
+ const guides=[];
+ best.forEach((match,index)=>{
+  if(!match)return;
+  const normal=axes[index], along=axes[1-index];
+  aligned=add(aligned,mul(normal,match.correction));
+  if(Math.abs(normal.y)<1e-8)guides.push({a:match.point,b:match.point,component:'x'});
+  else if(Math.abs(normal.x)<1e-8)guides.push({a:match.point,b:match.point,component:'y'});
+  else guides.push({a:add(match.point,mul(along,-15)),b:add(match.point,mul(along,15)),face:true});
+ });
+ return {dx:aligned.x,dy:aligned.y,guides,label:guides.length===2?'Две грани':'Грань стены'};
 }
 export function snapPoint(point,targets,tolerance,{alignment=true,axes=true}={}){
  let best=null;for(const target of targets.points){const distance=length(sub(point,target));if(distance<=tolerance&&(!best||distance<best.distance))best={point:{x:target.x,y:target.y},distance,marker:target,label:target.role,guides:[]};}

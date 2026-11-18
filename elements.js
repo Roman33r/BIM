@@ -20,7 +20,7 @@ export function migrateElements(project){
   }
   project.contentVersion=2;
  }
- for(const f of project.floors){f.furniture??=[];f.rooms.forEach((r,i)=>{r.id??=`${f.id}-room-${i+1}`;r.kind='room';});f.dimensions.forEach(d=>{d.kind='dimension';d.name??='Размер';d.offset??=.5;});}
+ for(const f of project.floors){f.furniture??=[];f.rooms.forEach((r,i)=>{r.id??=`${f.id}-room-${i+1}`;r.kind='room';});f.dimensions.forEach(d=>{d.kind='dimension';d.name??=d.mode==='angle'?'Угловой размер':'Размер';if(d.mode!=='angle')d.offset??=.5;});}
  project.id??=globalThis.crypto?.randomUUID?.()||`project-${Date.now()}-${Math.random().toString(36).slice(2)}`;
  return project;
 }
@@ -32,7 +32,7 @@ export function findElement(floor,id){
 export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...floor.slabs,...floor.furniture,...floor.rooms,...floor.dimensions];}
 export function elementPosition(element,host){
  if(host){const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y);return {x:host.a.x+(host.b.x-host.a.x)*element.position/length,y:host.a.y+(host.b.y-host.a.y)*element.position/length};}
- if(element.a)return {...element.a};
+ if(element.a)return {...(element.mode==='angle'?element.vertex:element.a)};
  if(element.points)return {x:element.points.reduce((s,p)=>s+p.x,0)/element.points.length,y:element.points.reduce((s,p)=>s+p.y,0)/element.points.length};
  return {x:element.x,y:element.y};
 }
@@ -45,7 +45,7 @@ export function translateElement(floor,id,dx,dy){
   const margin=.08+1e-9;let min=e.width/2+margin,max=length-e.width/2-margin;
   for(const other of host.openings){if(other.id===id)continue;if(other.position<e.position)min=Math.max(min,other.position+other.width/2+e.width/2+margin);else max=Math.min(max,other.position-other.width/2-e.width/2-margin);}
   e.position=Math.max(min,Math.min(max,e.position+delta));
- }else if(e.a){for(const p of [e.a,e.b]){p.x+=dx;p.y+=dy;}}
+ }else if(e.a){for(const p of e.mode==='angle'?[e.a,e.vertex,e.b]:[e.a,e.b]){p.x+=dx;p.y+=dy;}}
  else if(e.points){for(const p of e.points){p.x+=dx;p.y+=dy;}}
  else{e.x+=dx;e.y+=dy;}
  return found;

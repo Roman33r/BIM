@@ -1,4 +1,5 @@
 import {elementFrame, framePoint, add, mul} from './transforms.js';
+import {angleGeometry} from './annotations.js';
 
 export const AXIS_TYPES = Object.freeze({
  wall:'Стены', door:'Двери', window:'Окна', slab:'Перекрытия',
@@ -60,6 +61,10 @@ function matchesOutline(points, box) {
 
 function outline(element, host) {
  if (element.points) return element.points;
+ if (element.mode==='angle') {
+  const {rays,arc}=angleGeometry(element);
+  return [rays[1],rays[0],...arc,rays[2]];
+ }
  const frame = elementFrame(element,host);
  if (element.kind==='dimension') {
   const offset = mul(frame.v,element.offset);

@@ -4,31 +4,37 @@ import {hydrateIcons} from './icons.js';
 import {findElement,listElements,elementPosition,translateElement,translateSelection,makeFurniture,FURNITURE_TYPES} from './elements.js';
 import {loadProjects,saveProjects,CATALOG_KEY,LEGACY_KEY} from './project-store.js';
 import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,normalAngle,length,sub} from './transforms.js';
-import {snapTargets,snapPoint,snapTranslation} from './snapping.js';
+import {snapTargets,snapPoint,snapTranslation,snapWallTranslation} from './snapping.js';
 import {AXIS_TYPES,selectInPlan,selectionBounds,showSelectionBox} from './selection.js';
+import {angleLabel,angleRadius,angleValue} from './annotations.js';
+import {materialNames} from './materials.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
 const fmt=(value,digits=0)=>Number(value).toLocaleString('ru-RU',{maximumFractionDigits:digits});
 const escapeHTML=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid:true,labels:true,dimensions:true,snap:true,axes:true,guides:true,axisTypes:{}};
+let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid:true,labels:true,dimensions:true,snap:true,axes:true,guides:true,allFloors:false,axisTypes:{}};
 try{({project,projects}=loadProjects(localStorage));const prefs=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}');for(const k of Object.keys(preferences))if(typeof prefs[k]==='boolean'&&k!=='axisTypes')preferences[k]=prefs[k];for(const kind of Object.keys(AXIS_TYPES))if(prefs.axisTypes?.[kind]===false)preferences.axisTypes[kind]=false;}catch{loadWarning='Не удалось прочитать локальное сохранение. Открыт пример; исходное сохранение не изменено.';}
 let floorId=project.floors[0].id,tool='select',view='plan',draft=[],hover=null,pan=null,spaceHeld=false,section=false,scene=null,scenePromise=null;
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
+let cursorPoint={x:0,y:0};
 const floor=()=>project.floors.find(f=>f.id===floorId)||project.floors[0];
+const otherFloors=()=>preferences.allFloors?project.floors.filter(f=>f.id!==floorId):[];
+const elevation=value=>(value===0?'±':value>0?'+':'')+fmt(value,3);
 function singleSelection(){return selectedIds.size===1?selectedIds.values().next().value:null;}
 function selected(){return findElement(floor(),singleSelection());}
 function setSelection(ids){selectedIds=new Set(ids);}
 function snapshot(){return {project:clone(project),floorId,selection:[...selectedIds]};}
-function restore(state){project=clone(state.project);floorId=state.floorId;setSelection(state.selection);draft=[];editorFeedback={};save();render();}
+function restore(state){const changedFloor=floorId!==state.floorId;project=clone(state.project);floorId=state.floorId;setSelection(state.selection);draft=[];hover=null;editorFeedback={};save();if(changedFloor)fitPlan();render();}
 function mutate(action,message){const before=snapshot();try{action();validateProject(project);}catch(error){project=before.project;floorId=before.floorId;setSelection(before.selection);render();toast(error.message||'Не удалось изменить элемент.');return false;}history.push(before);if(history.length>60)history.shift();future=[];project.updatedAt=new Date().toISOString();save();render();if(message)toast(message);return true;}
 function save(){try{projects=saveProjects(localStorage,projects,project);saveFailed=false;$('save-state').querySelector('span').textContent='Сохранено на устройстве';return true;}catch{saveFailed=true;$('save-state').querySelector('span').textContent='Не сохранено';toast('Хранилище браузера недоступно. Скачайте проект через «Экспорт».');return false;}}
 function savePreferences(){try{localStorage.setItem(PREFS_KEY,JSON.stringify(preferences));}catch{/* Preferences are optional. */}}
 function toast(message){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
 function sceneOptions(){
  return {dark:preferences.dark,section,labels:preferences.labels,dimensions:preferences.dimensions,
-  axes:preferences.axes,axisTypes:preferences.axisTypes,feedback:editorFeedback,interactive:tool==='select'};
+  axes:preferences.axes,axisTypes:preferences.axisTypes,feedback:editorFeedback,interactive:tool==='select',
+  floors:preferences.allFloors?project.floors:null};
 }
 function refreshScene(){if(view!=='plan')scene?.update(floor(),selectedIds,sceneOptions());}
 function selectMany(ids,extend=false){
@@ -41,14 +47,49 @@ function select(id,extend=false){
  else selectMany(id?[id]:[]);
 }
 function updateEditButtons(){$('undo').disabled=!history.length;$('redo').disabled=!future.length;$('copy-button').disabled=!selectedIds.size;$('delete-button').disabled=!selectedIds.size;}
-function fitPlan(){baseCamera=planBounds(floor());camera={...baseCamera};renderPlanView();}
+function fitPlan(){baseCamera=planBounds(floor(),otherFloors());camera={...baseCamera};renderPlanView();}
 function updateViewBox(){$('plan-svg').setAttribute('viewBox',`${camera.x} ${camera.y} ${camera.w} ${camera.h}`);$('zoom-value').textContent=fmt(baseCamera.w/camera.w*100)+'%';}
 function zoom(factor,center){const next=camera.w*factor;if(next<2||next>100)return;const anchor=center||{x:camera.x+camera.w/2,y:camera.y+camera.h/2};camera.x=anchor.x+(camera.x-anchor.x)*factor;camera.y=anchor.y+(camera.y-anchor.y)*factor;camera.w*=factor;camera.h*=factor;renderPlanView();}
 function pixelUnit(){return 1/($('plan-svg').getScreenCTM()?.a||50);}
-function renderPlanView(){updateViewBox();$('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions,dark:preferences.dark,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,draft:draft.length?[...draft,...(hover?[hover]:[])]:[]}).content;}
+function renderPlanView(){
+ updateViewBox();
+ const points=draft.length?[...draft,...(hover?[hover]:[])]:[];
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:tool==='angle'?[]:points,angleDraft:tool==='angle'?points:null}).content;
+}
 
-function renderFloors(){const list=$('floors-list');list.replaceChildren();for(const f of [...project.floors].reverse()){const button=document.createElement('button');button.className='floor-item'+(f.id===floorId?' active':'');button.dataset.floor=f.id;button.setAttribute('aria-pressed',String(f.id===floorId));button.innerHTML='<i data-icon="layers"></i><span></span>'+(f.id===floorId?'<i class="floor-eye" data-icon="eye"></i>':'');button.querySelector('span').textContent=f.name;button.addEventListener('click',()=>{floorId=f.id;setSelection(f.walls[1]?[f.walls[1].id]:[]);draft=[];editorFeedback={};section=false;fitPlan();render();});list.append(button);}hydrateIcons(list);}
-function render(){document.body.classList.toggle('dark',preferences.dark);$('project-title').textContent=project.name;$('tree-project-title').textContent=project.name;document.title=project.name+' — Проект';$('plan-title').textContent='План · '+floor().name;$('floor-elevation').textContent=floor().elevation===0?'±0,000':'+'+floor().elevation.toFixed(3).replace('.',',');$('model-title').textContent=section?'3D · Отсечка':'3D · Аксонометрия';$('element-count').textContent=`${floor().walls.length} стен · ${floor().walls.reduce((s,w)=>s+w.openings.length,0)} проёмов`;renderFloors();renderPlanView();renderInspector();updateEditButtons();applyPreferenceButtons();refreshScene();}
+const floorsByElevation=()=>[...project.floors].sort((a,b)=>b.elevation-a.elevation);
+const floorLabel=f=>`${f.name} · ${elevation(f.elevation)} м`;
+function floorOptions(){
+ return floorsByElevation().map(f=>`<option value="${escapeHTML(f.id)}" ${f.id===floorId?'selected':''}>${escapeHTML(floorLabel(f))}</option>`).join('');
+}
+function chooseFloor(id){
+ if(id===floorId||!project.floors.some(level=>level.id===id))return;
+ floorId=id;setSelection([]);draft=[];hover=null;editorFeedback={};section=false;
+ if(!preferences.allFloors)fitPlan();
+ render();
+}
+function renderFloors(){
+ const list=$('floors-list');list.replaceChildren();
+ for(const f of floorsByElevation()){
+  const button=document.createElement('button');button.className='floor-item'+(f.id===floorId?' active':'');
+  button.dataset.floor=f.id;button.title=floorLabel(f);
+  button.setAttribute('aria-pressed',String(f.id===floorId));
+  button.innerHTML='<i data-icon="layers"></i><span></span>'+(f.id===floorId?'<i class="floor-eye" data-icon="eye"></i>':'');
+  button.querySelector('span').textContent=f.name;button.addEventListener('click',()=>chooseFloor(f.id));list.append(button);
+ }
+ hydrateIcons(list);
+ $('working-floor').innerHTML=floorOptions();
+ $('show-all-floors').checked=preferences.allFloors;
+}
+function render(){
+ document.body.classList.toggle('dark',preferences.dark);$('project-title').textContent=project.name;$('tree-project-title').textContent=project.name;
+ document.title=project.name+' — Проект';const level=floor();
+ $('plan-title').textContent=(preferences.allFloors?'Все этажи · Рабочий: ':'План · ')+level.name;
+ $('floor-elevation').textContent=elevation(level.elevation)+' м';
+ $('model-title').textContent='3D · '+(section?'Отсечка':preferences.allFloors?'Все этажи':level.name);
+ $('element-count').textContent=`${level.walls.length} стен · ${level.walls.reduce((s,w)=>s+w.openings.length,0)} проёмов`;
+ renderFloors();renderPlanView();renderInspector();updateToolHint();updateEditButtons();applyPreferenceButtons();updateCoordinates();refreshScene();
+}
 function propertyInput(key,label,value,{min=0,max=100000,step=10,unit='мм'}={}){return `<div class="property-row"><label for="property-${key}">${label}</label><div class="input-unit"><input id="property-${key}" data-property="${key}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><span>${unit}</span></div></div>`;}
 function sectionTitle(title){return `<h2>${title}<i data-icon="chevron"></i></h2>`;}
 function renderInspector(){
@@ -67,9 +108,11 @@ function renderInspector(){
  else if(e.kind==='slab')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(polygonArea(e.points),2)} м²</span></div>`;
  else if(e.kind==='furniture')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:50,max:30000})+propertyInput('d','Глубина',Math.round(e.d*1000),{min:50,max:30000})+propertyInput('height','Высота',Math.round(e.height*1000),{min:5,max:15000});
  else if(e.kind==='room')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:100,max:100000})+propertyInput('h','Глубина',Math.round(e.h*1000),{min:100,max:100000})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(e.w*e.h,2)} м²</span></div>`;
+ else if(e.mode==='angle')body+=`<div class="property-row"><span class="field-label">Угол</span><span class="value-muted">${angleLabel(angleValue(e))}</span></div>`+propertyInput('radius','Радиус дуги',Math.round(e.radius*1000),{min:50,max:100000,step:1});
  else if(e.kind==='dimension')body+=`<div class="property-row"><span class="field-label">Длина</span><span class="value-muted">${fmt(wallLength(e)*1000)} мм</span></div>`+propertyInput('offset','Отступ',Math.round(e.offset*1000),{min:-100000,max:100000});
- if(['wall','slab'].includes(e.kind)){const materials=[...new Set([e.material,'Кирпич','Газобетон','Бетон','Дерево'])];body+=`<div class="property-row"><label for="property-material">Материал</label><select id="property-material" data-property="material">${materials.map(m=>`<option ${m===e.material?'selected':''}>${escapeHTML(m)}</option>`).join('')}</select></div>`;}
- body+=`<div class="property-row"><span class="field-label">Этаж</span><span class="value-muted">${escapeHTML(floor().name)}</span></div></section>`;
+ if(['wall','slab'].includes(e.kind)){const materials=[...new Set([e.material,...materialNames])];body+=`<div class="property-row"><label for="property-material">Материал</label><select id="property-material" data-property="material">${materials.map(m=>`<option ${m===e.material?'selected':''}>${escapeHTML(m)}</option>`).join('')}</select></div>`;}
+ body+=host?`<div class="property-row"><span class="field-label">Этаж стены</span><span class="value-muted">${escapeHTML(floor().name)}</span></div>`:`<div class="property-row"><label for="property-floorId">Этаж</label><select id="property-floorId" data-property="floorId">${floorOptions()}</select></div>`;
+ body+='</section>';
  if(!host)body+=`<section class="property-section">${sectionTitle('Положение')}${propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000})}${propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000})}<p class="property-note">Перетащите элемент мышью или задайте координаты. Стрелки — шаг 50 мм, Shift — 500 мм.</p></section>`;
  if(e.kind==='wall')body+=`<section class="property-section">${sectionTitle('Конструкция')}<div class="property-row"><label for="property-loadBearing">Несущая стена</label><input class="toggle" id="property-loadBearing" data-property="loadBearing" type="checkbox" ${e.loadBearing?'checked':''}></div><div class="property-row"><span class="field-label">Проёмы</span><span class="value-muted">${e.openings.length}</span></div><div class="property-row"><span class="field-label">Объём брутто</span><span class="value-muted">${fmt(wallLength(e)*e.thickness*e.height,2)} м³</span></div></section>`;
  if(host)body+=`<section class="property-section">${sectionTitle('Размещение')}<div class="property-row"><span class="field-label">Основа</span><span class="value-muted">${escapeHTML(host.id.slice(0,14))}</span></div><p class="property-note">Положение отсчитывается от начала оси стены. Проём сохраняет связь со стеной.</p></section>`;
@@ -79,6 +122,16 @@ function renderInspector(){
  node.innerHTML=body;hydrateIcons(node);node.querySelectorAll('[data-property]').forEach(input=>{input.addEventListener('change',()=>updateProperty(input));input.addEventListener('keydown',event=>{if(event.key==='Enter')input.blur();});});
 }
 function updateProperty(input){const item=selected();if(!item)return;const key=input.dataset.property,value=input.type==='checkbox'?input.checked:input.tagName==='SELECT'||input.type==='text'?input.value.trim():Number(input.value)/1000;
+ if(key==='floorId'){
+  const target=project.floors.find(level=>level.id===input.value);
+  if(!target||target===floor()||item.host)return;
+  const moved=mutate(()=>{
+   const source=floor()[item.collection];source.splice(source.indexOf(item.element),1);
+   target[item.collection].push(item.element);floorId=target.id;draft=[];hover=null;editorFeedback={};
+  },'Перенесено на этаж «'+target.name+'»');
+  if(moved&&!preferences.allFloors)fitPlan();
+  return;
+ }
  mutate(()=>{const {element:e,host}=item;
   if(typeof value==='number'&&(!Number.isFinite(value)||input.value===''))throw new Error('Введите корректное значение.');
   if(key==='x'||key==='y'){const pos=elementPosition(e,host);translateElement(floor(),item.element.id,key==='x'?value-pos.x:0,key==='y'?value-pos.y:0);}
@@ -87,17 +140,38 @@ function updateProperty(input){const item=selected();if(!item)return;const key=i
   if(e.kind==='wall'&&e.openings.some(o=>!canPlaceOpening(e,o,o.id)))throw new Error('Размер стены не позволяет сохранить существующие проёмы.');
  });
 }
-async function ensureScene(){if(scene){scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany});refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
+async function ensureScene(){if(scene){refreshScene();scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany});refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
 function setView(next){view=next;$('viewports').dataset.mode=next;$$('[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===next);button.setAttribute('aria-pressed',String(button.dataset.view===next));});if(next!=='plan')ensureScene();if(tool!=='select'&&next==='3d')setTool('select');}
 const hints={select:'Перетащите элемент для переноса · Начните с пустого места или удерживайте Shift для рамки',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',door:'Нажмите на стену, чтобы разместить дверь',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки для размера',room:'Задайте два противоположных угла помещения'};
-function setTool(next){tool=next;draft=[];hover=null;editorFeedback={};$$('[data-tool]').forEach(button=>{button.classList.toggle('active',button.dataset.tool===next);button.setAttribute('aria-pressed',String(button.dataset.tool===next));});$('canvas-hint').textContent=next==='select'&&!listElements(floor()).length?'Пустой проект · Выберите «Стена» слева или добавьте мебель из библиотеки':hints[next];$('tool-status').textContent=next==='select'?'Выбор элементов':hints[next];$('drawing-surface').classList.toggle('drawing',next!=='select');if(next!=='select'&&view==='3d')setView('plan');renderPlanView();refreshScene();}
+function updateToolHint(){
+ let hint=hints[tool];
+ if(tool==='select'&&!listElements(floor()).length)hint='Пустой этаж · Выберите «Стена», «Плита» или добавьте мебель';
+ if(tool==='slab')hint=`${floorLabel(floor())} · ${hint}`;
+ if(tool==='angle')hint=['Укажите вершину угла','Укажите точку на первом луче','Укажите точку на втором луче'][draft.length];
+ $('canvas-hint').textContent=hint;
+ $('tool-status').textContent=tool==='select'?'Выбор элементов':hint;
+}
+function setTool(next){tool=next;draft=[];hover=null;editorFeedback={};$$('[data-tool]').forEach(button=>{button.classList.toggle('active',button.dataset.tool===next);button.setAttribute('aria-pressed',String(button.dataset.tool===next));});updateToolHint();$('drawing-surface').classList.toggle('drawing',next!=='select');if(next!=='select'&&view==='3d')setView('plan');renderPlanView();refreshScene();}
 function worldPoint(event){const svg=$('plan-svg'),point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;return point.matrixTransform(svg.getScreenCTM().inverse());}
 function snapped(point,event){let p={x:point.x,y:point.y};editorFeedback={};
  if(preferences.snap&&!event.altKey){const result=snapPoint(p,snapTargets(floor(),null,preferences.axes,sceneOptions()),pixelUnit()*8,{alignment:preferences.guides,axes:preferences.axes});editorFeedback=result;p=result.label?result.point:{x:Math.round(p.x*20)/20,y:Math.round(p.y*20)/20};}
- if(event.shiftKey&&draft.length){const start=draft[draft.length-1];if(Math.abs(p.x-start.x)>Math.abs(p.y-start.y))p.y=start.y;else p.x=start.x;}
+ if(event.shiftKey&&draft.length){const start=tool==='angle'?draft[0]:draft[draft.length-1];if(Math.abs(p.x-start.x)>Math.abs(p.y-start.y))p.y=start.y;else p.x=start.x;}
  return p;}
 
 function choosePoint(p,event){
+ if(tool==='angle'){
+  const [vertex,a]=draft;
+  if(vertex&&length(sub(p,vertex))<.01){toast('Укажите точку вне вершины угла.');return;}
+  if(a){
+   const d={id:uid('РЗ'),kind:'dimension',mode:'angle',name:'Угловой размер',vertex,a,b:p,radius:angleRadius(vertex,a,p)};
+   if(angleValue(d)<.01){toast('Укажите точку на другом луче.');return;}
+   draft=[];hover=null;editorFeedback={};
+   mutate(()=>{floor().dimensions.push(d);setSelection([d.id]);},'Угловой размер добавлен');
+  }else{
+   draft.push(p);hover=null;updateToolHint();renderPlanView();
+  }
+  return;
+ }
  if(tool==='wall'||tool==='dimension'||tool==='room'){draft.push(p);if(draft.length===2){const [a,b]=draft;draft=[];hover=null;if(Math.hypot(a.x-b.x,a.y-b.y)<.2){toast('Минимальная длина — 200 мм.');renderPlanView();return;}mutate(()=>{const id=uid(tool==='wall'?'СТ':tool==='room'?'ПМ':'РЗ');if(tool==='wall'){floor().walls.push({id,kind:'wall',name:'Новая стена',a,b,thickness:.3,height:floor().height,material:'Кирпич',loadBearing:false,openings:[]});}else if(tool==='room'){floor().rooms.push({id,kind:'room',name:'Помещение '+(floor().rooms.length+1),x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)});}else floor().dimensions.push({id,kind:'dimension',name:'Размер',a,b,offset:.5});setSelection([id]);},tool==='wall'?'Стена добавлена':tool==='room'?'Помещение добавлено':'Размер добавлен');}else renderPlanView();
  }else if(tool==='slab'){if(event.detail>1)return;draft.push(p);renderPlanView();
  }else if(tool==='door'||tool==='window'){
@@ -140,7 +214,7 @@ function copySelected(){
   setSelection(copies);
  },'Копии созданы');
 }
-function elementIcon(e){return {wall:'wall',slab:'layers',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube';}
+function elementIcon(e){return e.mode==='angle'?'angle':({wall:'wall',slab:'layers',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
 function renderElementList(){const list=$('elements-list');if(!list)return;const previousScroll=list.scrollTop;list.replaceChildren();const all=listElements(floor());$('elements-count').textContent=all.length;for(const e of all){const button=document.createElement('button');button.className='element-list-item'+(selectedIds.has(e.id)?' active':'');button.setAttribute('aria-pressed',String(selectedIds.has(e.id)));button.dataset.elementId=e.id;button.innerHTML=`<i data-icon="${elementIcon(e)}"></i><span></span>`;button.querySelector('span').textContent=e.name;button.title=e.name+' · '+e.id;button.onclick=event=>{setTool('select');select(e.id,event.shiftKey);};list.append(button);}if(!all.length){const note=document.createElement('p');note.className='empty-elements';note.textContent='Пока нет элементов. Начните со стены.';list.append(note);}hydrateIcons(list);list.scrollTop=previousScroll;}
 function beginElementDrag(id,point,handle=null){
  if(!findElement(floor(),id))return;
@@ -154,7 +228,20 @@ function beginElementDrag(id,point,handle=null){
 function selectionAnchors(current,ids){
  return ids.flatMap(id=>{const item=findElement(current,id);return item?elementAnchors(item.element,item.host):[];});
 }
-function accurateFeedback(feedback,points){if(!feedback.label)return feedback;const hit=feedback.marker&&points.some(p=>length(sub(p,feedback.marker))<1e-6);const guides=(feedback.guides||[]).filter(g=>{if(g.component)return points.some(p=>Math.abs(p[g.component]-g.a[g.component])<1e-6);if(g.axis){const d=sub(g.b,g.a),l=length(d);return l>0&&points.some(p=>Math.abs((p.x-g.a.x)*d.y-(p.y-g.a.y)*d.x)/l<1e-6);}return !!hit;});return {...feedback,guides,marker:hit?feedback.marker:null,label:hit?feedback.label:guides.length?'Выравнивание':''};}
+function accurateFeedback(feedback,points){
+ if(!feedback.label)return feedback;
+ const hit=feedback.marker&&points.some(p=>length(sub(p,feedback.marker))<1e-6);
+ const proposed=feedback.guides||[];
+ const guides=proposed.filter(g=>{
+  if(g.component)return points.some(p=>Math.abs(p[g.component]-g.a[g.component])<1e-6);
+  if(!g.axis&&!g.face)return !!hit;
+  const d=sub(g.b,g.a),l=length(d);
+  return l>0&&points.some(p=>Math.abs((p.x-g.a.x)*d.y-(p.y-g.a.y)*d.x)/l<1e-6);
+ });
+ const label=guides.length?'Выравнивание':'';
+ return {...feedback,guides,marker:hit?feedback.marker:null,
+  label:hit||label&&guides.length===proposed.length?feedback.label:label};
+}
 function previewElementDrag(point,shift=false,disableSnap=false,unit=pixelUnit()){
  if(!movement)return;const drag=movement,sourceFloor=drag.before.project.floors.find(f=>f.id===floorId),original=findElement(sourceFloor,drag.id),candidate=clone(drag.before.project),candidateFloor=candidate.floors.find(f=>f.id===floorId),tol=unit*8;
  let dx=point.x-drag.start.x,dy=point.y-drag.start.y,feedback={},description='';
@@ -170,7 +257,16 @@ function previewElementDrag(point,shift=false,disableSnap=false,unit=pixelUnit()
    const actual=findElement(candidateFloor,drag.id),handle=transformHandles(actual.element,actual.host,pixelUnit()).find(h=>h.key===drag.handle);if(handle)feedback=accurateFeedback(feedback,[handle]);
   }else{
    if(shift){if(Math.abs(dx)>Math.abs(dy))dy=0;else dx=0;}
-   if(preferences.snap&&!disableSnap){feedback=snapTranslation(sourceFloor,drag.ids,dx,dy,tol,{alignment:preferences.guides,axes:preferences.axes,targets:drag.targets,anchors:drag.anchors});if(feedback.label){dx=feedback.dx;dy=feedback.dy;}else{dx=Math.round(dx*20)/20;dy=Math.round(dy*20)/20;}}
+   if(preferences.snap&&!disableSnap){
+    const wallSnap=original.element.kind==='wall'&&preferences.guides&&!shift
+     ?snapWallTranslation(original.element,sourceFloor.walls.filter(w=>!drag.ids.includes(w.id)),dx,dy,tol):null;
+    if(wallSnap?.guides.length===2)feedback=wallSnap;
+    else{
+     const generic=snapTranslation(sourceFloor,drag.ids,dx,dy,tol,{alignment:preferences.guides,axes:preferences.axes,targets:drag.targets,anchors:drag.anchors});
+     feedback=generic.marker?generic:wallSnap??generic;
+    }
+    if(feedback.label){dx=feedback.dx;dy=feedback.dy;}else{dx=Math.round(dx*20)/20;dy=Math.round(dy*20)/20;}
+   }
    if(shift){if(Math.abs(point.x-drag.start.x)>Math.abs(point.y-drag.start.y))dy=0;else dx=0;}
    translateSelection(candidateFloor,drag.ids,dx,dy);description=`Перемещение · ΔX ${fmt(dx*1000)} · ΔY ${fmt(dy*1000)} мм`;
    feedback=accurateFeedback(feedback,selectionAnchors(candidateFloor,drag.ids));
@@ -197,6 +293,34 @@ function closeMenus(){
 }
 function menu(id,buttonId){const wasHidden=$(id).hidden;closeMenus();$(id).hidden=!wasHidden;$(buttonId).setAttribute('aria-expanded',String(wasHidden));}
 function modal(title,content){closeMenus();$('modal-title').textContent=title;$('modal-content').innerHTML=content;hydrateIcons($('modal-content'));$('modal').showModal();}
+function editFloor(level){
+ if(!level&&project.floors.length>=20){toast('В проекте может быть до 20 этажей.');return;}
+ const top=floorsByElevation()[0];
+ const initial=level||{name:`${project.floors.length+1} этаж`,elevation:Math.min(200,top.elevation+top.height),height:top.height};
+ modal(level?'Настроить этаж':'Добавить этаж',`<form id="floor-form" class="floor-form">
+  <label for="floor-name">Название</label><input id="floor-name" type="text" maxlength="100" required value="${escapeHTML(initial.name)}">
+  <label for="floor-level">Отметка пола, м</label><input id="floor-level" type="number" required min="-100" max="200" step="any" value="${initial.elevation}">
+  <label for="floor-height">Высота этажа, м</label><input id="floor-height" type="number" required min="1" max="15" step="any" value="${initial.height}">
+  <div class="modal-actions"><button class="button" id="cancel-floor" type="button">Отмена</button><button class="button primary" type="submit">${level?'Сохранить':'Создать этаж'}</button></div>
+ </form>`);
+ $('cancel-floor').onclick=()=>$('modal').close();
+ $('floor-form').onsubmit=event=>{
+  event.preventDefault();
+  const name=$('floor-name').value.trim();
+  if(!name){$('floor-name').focus();return;}
+  const settings={name,elevation:$('floor-level').valueAsNumber,height:$('floor-height').valueAsNumber};
+  const ok=mutate(()=>{
+   if(level)Object.assign(floor(),settings);
+   else{
+    const id=uid('floor');
+    project.floors.push({id,...settings,walls:[],slabs:[],furniture:[],rooms:[],dimensions:[]});
+    floorId=id;setSelection([]);draft=[];hover=null;editorFeedback={};section=false;
+   }
+  },level?'Параметры этажа сохранены':'Этаж создан');
+  if(ok){$('modal').close();if(!level)fitPlan();}
+ };
+ $('floor-name').select();
+}
 function actionModal(title,description,label,callback){modal(title,`<p>${description}</p><div class="modal-actions"><button class="button" id="cancel-action">Отмена</button><button class="button primary" id="confirm-action">${label}</button></div>`);$('cancel-action').onclick=()=>$('modal').close();$('confirm-action').onclick=()=>{$('modal').close();callback();};}
 function exportProject(format){closeMenus();if(format==='print'){printPlan();return;}let data,type,extension;if(format==='json'){data=JSON.stringify(project,null,2);type='application/json';extension='json';}else{data=exportSVG(floor(),{labels:preferences.labels,dimensions:preferences.dimensions,axes:preferences.axes,feedback:editorFeedback});type='image/svg+xml';extension='svg';}const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=project.name.replace(/[<>:"/\\|?*]/g,'-')+(format==='svg'?' — '+floor().name:'')+'.'+extension;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);toast(format==='json'?'Проект скачан. Его можно открыть на другом устройстве.':'Векторный план SVG скачан.');}
 function printPlan(){const sheet=$('print-sheet');sheet.replaceChildren();const title=document.createElement('h1');title.textContent=project.name+' · '+floor().name;sheet.append(title);const drawing=document.createElement('div');drawing.innerHTML=exportSVG(floor(),{labels:true,dimensions:true});sheet.append(drawing);const note=document.createElement('p');note.textContent='Схема из прототипа редактора · '+new Date().toLocaleDateString('ru-RU')+' · Масштаб зависит от настроек печати. Не является рабочей документацией.';sheet.append(note);window.print();}
@@ -251,14 +375,20 @@ $('import-file').onchange=async event=>{const file=event.target.files[0];event.t
 $('rename-project').onclick=()=>{modal('Название проекта','<p>Название можно изменить в любой момент.</p><label for="project-name-input">Проект</label><input type="text" id="project-name-input" maxlength="100"><div class="modal-actions"><button class="button primary" id="save-project-name">Сохранить</button></div>');$('project-name-input').value=project.name;$('project-name-input').focus();const submit=()=>{const name=$('project-name-input').value.trim();if(!name)return;mutate(()=>project.name=name);$('modal').close();};$('save-project-name').onclick=submit;$('project-name-input').onkeydown=e=>{if(e.key==='Enter')submit();};};
 $('reset-project').onclick=()=>actionModal('Восстановить пример?','Откроется исходный дом с двумя этажами. Текущую модель можно вернуть через Ctrl+Z.','Восстановить',()=>{mutate(()=>{project=createDemo();floorId=project.floors[0].id;setSelection(['СТ-014']);});fitPlan();});
 $('theme-button').onclick=()=>{closeMenus();togglePreference('dark');};
-$('add-floor').onclick=()=>{if(project.floors.length>=20){toast('В прототипе поддерживается до 20 этажей.');return;}mutate(()=>{const top=[...project.floors].sort((a,b)=>b.elevation-a.elevation)[0],copy=clone(top);copy.id=uid('floor');copy.name=`${project.floors.length+1} этаж`;copy.elevation=top.elevation+top.height;copy.walls.forEach(w=>{w.id=uid('СТ');w.openings.forEach(o=>o.id=uid(o.kind==='door'?'ДВ':'ОК'));});copy.slabs.forEach(s=>s.id=uid('ПЛ'));copy.dimensions.forEach(d=>d.id=uid('РЗ'));copy.furniture.forEach(e=>e.id=uid('МБ'));copy.rooms.forEach(e=>e.id=uid('ПМ'));project.floors.push(copy);floorId=copy.id;setSelection([]);},'Этаж добавлен с копией элементов верхнего этажа');};
+$('add-floor').onclick=()=>editFloor();
+$('edit-floor').onclick=()=>editFloor(floor());
+$('working-floor').onchange=event=>chooseFloor(event.target.value);
+$('show-all-floors').onchange=event=>{
+ preferences.allFloors=event.target.checked;
+ savePreferences();fitPlan();render();
+};
 $('section-view').onclick=()=>{section=true;setView('3d');$('model-title').textContent='3D · Отсечка';refreshScene();toast('Показана горизонтальная отсечка на высоте 1 150 мм.');};
 $('facade-view').onclick=async()=>{section=false;setView('3d');await ensureScene();refreshScene();scene?.facade();$('model-title').textContent='3D · Южный фасад';};
 $('sheet-view').onclick=()=>actionModal('План этажа','Откроется диалог печати браузера. Для сохранения PDF выберите соответствующий принтер. Масштаб схемы зависит от настроек печати.','Печать / PDF',printPlan);
 $('modal-close').onclick=()=>$('modal').close();$('modal').addEventListener('click',event=>{if(event.target===$('modal')){const r=$('modal').getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)$('modal').close();}});
-function showAbout(){modal('Рабочее пространство','<p>Интерактивный прототип архитектурного редактора: план, 3D и свойства элементов в одном окне.</p><p>Проект сохраняется <strong>только в этом браузере</strong>. Чтобы перенести его на другое устройство, используйте «Экспорт → Проект JSON» и «Открыть».</p><p>3D показывает выбранный этаж. Все элементы можно выделять и перемещать. Проекты доступны через меню «Мои проекты». Полноценные BIM-расчёты, IFC и командная работа запланированы на следующих этапах.</p>');}
+function showAbout(){modal('Рабочее пространство','<p>Интерактивный прототип архитектурного редактора: план, 3D и свойства элементов в одном окне.</p><p>Проект сохраняется <strong>только в этом браузере</strong>. Чтобы перенести его на другое устройство, используйте «Экспорт → Проект JSON» и «Открыть».</p><p>Режим «Все этажи» показывает здание целиком. Новые элементы создаются на рабочем этаже. Все элементы можно выделять и перемещать. Проекты доступны через меню «Мои проекты». Полноценные BIM-расчёты, IFC и командная работа запланированы на следующих этапах.</p>');}
 $('about-button').onclick=showAbout;
-function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить к выделению','Shift + щелчок'],['Изменение размера','Квадратные ручки'],['Поворот','Круглая ручка'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверь / окно','D / O'],['Перекрытие','P → точки → Enter'],['Размер','M → две точки'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
+function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить к выделению','Shift + щелчок'],['Изменение размера','Квадратные ручки'],['Поворот','Круглая ручка'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверь / окно','D / O'],['Перекрытие','P → точки → Enter'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
 $('help-button').onclick=showHelp;
 $('settings-button').onclick=()=>{modal('Отображение',`<p>Настройки сохраняются на этом устройстве.</p>${[['dark','Тёмная тема'],['grid','Сетка'],['labels','Названия помещений'],['dimensions','Размеры'],['snap','Привязка к краям, серединам и центрам'],['axes','Оси деталей и привязки к осям'],['guides','Направляющие и выравнивание']].map(([key,label])=>`<label class="settings-option">${label}<input class="toggle" type="checkbox" data-pref="${key}" ${preferences[key]?'checked':''}></label>`).join('')}`);$$('[data-pref]').forEach(input=>input.onchange=()=>{preferences[input.dataset.pref]=input.checked;savePreferences();render();});};
 const surface=$('drawing-surface');
@@ -295,13 +425,16 @@ surface.addEventListener('pointermove',event=>{
   if(movement.valid||length(sub(pointerPosition(event),movement.pointerStart||pointerPosition(event)))>=4)previewElementDrag(p,event.shiftKey,event.altKey);
   return;
  }
- const coordinates=$('cursor-coordinates');
- coordinates.replaceChildren();
- for(const [axis,value] of [['X',p.x],['Y',p.y],['Z',floor().elevation]]){
-  const span=document.createElement('span');span.textContent=axis+': '+fmt(value*1000);coordinates.append(span);
- }
+ cursorPoint=p;updateCoordinates();
  if(draft.length||tool!=='select'){hover=snapped(p,event);renderPlanView();}
 });
+function updateCoordinates(){
+ const coordinates=$('cursor-coordinates');
+ coordinates.replaceChildren();
+ for(const [axis,value] of [['X',cursorPoint.x],['Y',cursorPoint.y],['Z',floor().elevation]]){
+  const span=document.createElement('span');span.textContent=axis+': '+fmt(value*1000);coordinates.append(span);
+ }
+}
 function endPan(){pan=null;surface.classList.remove('panning');}
 surface.addEventListener('pointerup',event=>{
  if(marquee){
@@ -317,7 +450,7 @@ surface.addEventListener('lostpointercapture',()=>{if(marquee||movement||pan){cl
 surface.addEventListener('dblclick',()=>{if(tool==='slab')finishSlab();});
 surface.addEventListener('wheel',event=>{event.preventDefault();zoom(Math.exp(Math.max(-100,Math.min(100,event.deltaY))*.0017),worldPoint(event));},{passive:false});
 document.addEventListener('keydown',event=>{if(event.target.closest('input,select,textarea')||$('modal').open)return;const ctrl=event.ctrlKey||event.metaKey;
- const pressed=event.key.toLowerCase(),key=ctrl&&/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&tool==='slab'){finishSlab();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',d:'door',o:'window',p:'slab',m:'dimension',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
+ const pressed=event.key.toLowerCase(),key=ctrl&&/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&tool==='slab'){finishSlab();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',d:'door',o:'window',p:'slab',m:'dimension',a:'angle',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
 document.addEventListener('keyup',event=>{if(event.code==='Space')spaceHeld=false;});window.addEventListener('blur',()=>{spaceHeld=false;clearMarquee();cancelElementDrag();endPan();});
 window.addEventListener('storage',event=>{if([STORAGE_KEY,CATALOG_KEY].includes(event.key)&&event.newValue)toast('Проект изменён в другой вкладке. Скачайте текущую копию перед перезагрузкой.');});
 if(loadWarning)toast(loadWarning);

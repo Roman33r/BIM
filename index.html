@@ -29,6 +29,7 @@
       <button class="tool" data-tool="window" title="Окно · O" aria-label="Окно" aria-pressed="false"><i data-icon="window"></i><span>Окно</span></button>
       <button class="tool" data-tool="slab" title="Перекрытие · P" aria-label="Перекрытие" aria-pressed="false"><i data-icon="layers"></i><span>Плита</span></button>
       <button class="tool" data-tool="dimension" title="Размер · M" aria-label="Размер" aria-pressed="false"><i data-icon="dimension"></i><span>Размер</span></button>
+      <button class="tool" data-tool="angle" title="Угловой размер · A" aria-label="Угловой размер" aria-pressed="false"><i data-icon="angle"></i><span>Угол</span></button>
       <button class="tool" data-tool="room" title="Помещение · R" aria-label="Помещение" aria-pressed="false"><i data-icon="home"></i><span>Зона</span></button>
     </div>
     <div class="tools-bottom"><button class="tool compact" id="settings-button" title="Настройки отображения" aria-label="Настройки отображения"><i data-icon="settings"></i></button><button class="tool compact" id="help-button" title="Помощь · ?" aria-label="Помощь"><i data-icon="help"></i></button></div>
@@ -50,6 +51,12 @@
   <main class="workspace">
     <div class="workspace-toolbar">
       <div class="view-switch" role="group" aria-label="Режим просмотра"><button data-view="plan" class="active" aria-pressed="true"><i data-icon="plan"></i><span>План</span></button><button data-view="3d" aria-pressed="false"><i data-icon="cube"></i><span>3D</span></button><button data-view="split" aria-pressed="false"><i data-icon="split"></i><span>Разделить</span></button></div>
+      <div class="floor-controls">
+        <label for="working-floor">Рабочий этаж</label>
+        <select id="working-floor"></select>
+        <button class="tiny-button" id="edit-floor" title="Настроить рабочий этаж" aria-label="Настроить рабочий этаж"><i data-icon="edit"></i></button>
+        <label class="all-floors"><input id="show-all-floors" type="checkbox">Все этажи</label>
+      </div>
       <div class="edit-tools"><button class="icon-button" id="copy-button" title="Дублировать · Ctrl+D" aria-label="Дублировать"><i data-icon="copy"></i></button><button class="icon-button" id="delete-button" title="Удалить · Delete" aria-label="Удалить"><i data-icon="trash"></i></button><span class="toolbar-divider"></span><button class="icon-button active" id="labels-button" title="Названия помещений" aria-label="Названия помещений" aria-pressed="true"><i data-icon="text"></i></button><button class="icon-button active" id="dimensions-button" title="Показать размеры" aria-label="Показать размеры" aria-pressed="true"><i data-icon="dimension"></i></button><div class="axes-control"><button class="icon-button active" id="axes-button" title="Фильтр осей симметрии" aria-label="Оси симметрии" aria-expanded="false" aria-controls="axes-menu"><i data-icon="axis"></i><i data-icon="chevron" class="small"></i></button><div id="axes-menu" class="axes-menu" role="group" aria-label="Фильтр осей симметрии" hidden><label class="axis-master"><input type="checkbox" id="axes-master">Показывать оси</label><div id="axis-type-options"></div></div></div><button class="icon-button active" id="guides-button" title="Направляющие и выравнивание" aria-label="Направляющие" aria-pressed="true"><i data-icon="align"></i></button><button class="icon-button" id="focus-button" title="Вписать модель · F" aria-label="Вписать модель"><i data-icon="fit"></i></button></div>
     </div>
     <div class="viewports" id="viewports" data-mode="plan">

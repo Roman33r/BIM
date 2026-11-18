@@ -1,5 +1,6 @@
 import {migrateElements,FURNITURE_TYPES} from './elements.js';
 import {isSimplePolygon} from './transforms.js';
+import {angleValue} from './annotations.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -50,7 +51,14 @@ export function validateProject(value){
   for(const w of f.walls){id(w.id);if(w.kind!=='wall'||!str(w.name)||!str(w.material)||!point(w.a)||!point(w.b)||!num(wallLength(w),0.2,100)||!num(w.thickness,0.05,1.5)||!num(w.height,1,15)||!Array.isArray(w.openings)||w.openings.length>100)fail();for(const o of w.openings){id(o.id);if(!['door','window'].includes(o.kind)||!str(o.name)||!num(o.position,0,100)||!num(o.width,0.3,10)||!num(o.height,0.3,15)||!num(o.sill,0,15)||!canPlaceOpening(w,o,o.id))fail();}}
   for(const s of f.slabs){id(s.id);if(s.kind!=='slab'||!str(s.name)||!str(s.material)||!num(s.thickness,0.05,1.5)||!Array.isArray(s.points)||s.points.length<3||s.points.length>200||!s.points.every(point)||polygonArea(s.points)<0.1||!isSimplePolygon(s.points)||!num(s.rotation??0,-360,360))fail();}
   for(const r of f.rooms){id(r.id);if(r.kind!=='room'||!str(r.name)||!num(r.x)||!num(r.y)||!num(r.w,0.1,100)||!num(r.h,0.1,100)||!num(r.rotation??0,-360,360))fail();}
-  for(const d of f.dimensions){id(d.id);if(d.kind!=='dimension'||!str(d.name)||!point(d.a)||!point(d.b)||!num(d.offset,-100,100)||!num(wallLength(d),.01,3000))fail();}
+  for(const d of f.dimensions){
+   id(d.id);if(d.kind!=='dimension'||!str(d.name)||!point(d.a)||!point(d.b))fail();
+   if(d.mode==='angle'){
+    if(!point(d.vertex)||!num(d.radius,.05,100)
+     ||Math.hypot(d.a.x-d.vertex.x,d.a.y-d.vertex.y)<.01
+     ||Math.hypot(d.b.x-d.vertex.x,d.b.y-d.vertex.y)<.01||angleValue(d)<.01)fail();
+   }else if(d.mode!==undefined||!num(d.offset,-100,100)||!num(wallLength(d),.01,3000))fail();
+  }
   if(!Array.isArray(f.furniture)||f.furniture.length>2000)fail();
   for(const e of f.furniture){id(e.id);if(e.kind!=='furniture'||!Object.hasOwn(FURNITURE_TYPES,e.type)||!str(e.name)||!num(e.x)||!num(e.y)||!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.height,.005,15)||!num(e.rotation,-360,360))fail();}
   for(const e of [...f.walls,...f.walls.flatMap(w=>w.openings),...f.slabs,...f.rooms,...f.furniture,...f.dimensions])if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();

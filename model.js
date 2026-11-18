@@ -1,3 +1,4 @@
+import {migrateElements,FURNITURE_TYPES} from './elements.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -27,7 +28,10 @@ export function createDemo(){
  const walls=[makeWall('СТ-001',[0,0],[12,0],[windowAt('ОК-001',2.1),doorAt('ДВ-001',6,1.2),windowAt('ОК-002',10.1)],true),makeWall('СТ-014',[12,0],[12,9],[windowAt('ОК-003',1.9,1.6),windowAt('ОК-004',6.7,2.4)],true),makeWall('СТ-003',[12,9],[0,9],[windowAt('ОК-005',2.2,2),doorAt('ДВ-002',6,1.8),windowAt('ОК-006',9.8,2)],true),makeWall('СТ-004',[0,9],[0,0],[windowAt('ОК-007',2.1,1.8),windowAt('ОК-008',7.2,1.6)],true),makeWall('СТ-005',[4.2,0],[4.2,3.5],[doorAt('ДВ-003',2.65)]),makeWall('СТ-006',[8,0],[8,4.5],[doorAt('ДВ-004',3.55,1)]),makeWall('СТ-007',[0,3.5],[4.2,3.5]),makeWall('СТ-008',[2.5,3.5],[2.5,5.5],[doorAt('ДВ-005',1,0.75)]),makeWall('СТ-009',[0,5.5],[4.2,5.5],[doorAt('ДВ-006',3.2,0.8)]),makeWall('СТ-010',[4.2,3.5],[4.2,5.5],[doorAt('ДВ-007',1,0.8)])];
  const floor={id:'floor-1',name:'1 этаж',elevation:0,height:3,walls,slabs:[{id:'ПЛ-001',kind:'slab',name:'Перекрытие',thickness:0.2,material:'Бетон',points:[{x:0,y:0},{x:12,y:0},{x:12,y:9},{x:0,y:9}]}],dimensions:[],rooms:[{name:'Кабинет',x:0.15,y:0.15,w:3.97,h:3.27},{name:'Холл',x:4.28,y:0.15,w:3.64,h:5.27},{name:'Кухня',x:8.08,y:0.15,w:3.77,h:4.27},{name:'Санузел',x:0.15,y:3.58,w:2.27,h:1.84},{name:'Постирочная',x:2.58,y:3.58,w:1.54,h:1.84},{name:'Гостиная',x:0.15,y:5.58,w:11.7,h:3.27}]};
  const upper=clone(floor);upper.id='floor-2';upper.name='2 этаж';upper.elevation=3;upper.rooms[0].name='Спальня';upper.rooms[2].name='Детская';upper.rooms[5].name='Спальня';upper.walls.forEach(w=>{w.id+='-2';w.openings.forEach(o=>o.id+='-2')});upper.slabs[0].id='ПЛ-002';
- return {schemaVersion:1,name:'Дом в сосновом бору',updatedAt:new Date().toISOString(),floors:[floor,upper]};
+ return migrateElements({schemaVersion:1,name:'Дом в сосновом бору',updatedAt:new Date().toISOString(),floors:[floor,upper]});
+}
+export function createEmptyProject(name='Новый проект'){
+ return {schemaVersion:1,contentVersion:2,id:uid('project'),name:name.trim()||'Новый проект',updatedAt:new Date().toISOString(),floors:[{id:uid('floor'),name:'1 этаж',elevation:0,height:3,walls:[],slabs:[],rooms:[],dimensions:[],furniture:[]}]};
 }
 export function validateProject(value){
  const fail=()=>{throw new Error('Файл не соответствует формату проекта версии 1.');};
@@ -35,13 +39,19 @@ export function validateProject(value){
  const str=(s,max=100)=>typeof s==='string'&&s.length>0&&s.length<=max;
  const point=p=>p&&num(p.x)&&num(p.y);
  if(!value||value.schemaVersion!==1||!str(value.name)||!Array.isArray(value.floors)||!value.floors.length||value.floors.length>20)fail();
+ if(value.contentVersion!==undefined&&value.contentVersion!==2)fail();
+ for(const f of value.floors)if(!f||!Array.isArray(f.walls)||!Array.isArray(f.slabs)||!Array.isArray(f.rooms)||!Array.isArray(f.dimensions)||f.rooms.some(r=>!r||typeof r!=='object')||f.dimensions.some(d=>!d||typeof d!=='object'))fail();
+ migrateElements(value);
  const ids=new Set();const id=s=>{if(!str(s)||ids.has(s))fail();ids.add(s)};
+ if(!str(value.id))fail();
  for(const f of value.floors){
   id(f.id);if(!str(f.name)||!num(f.elevation,-100,200)||!num(f.height,1,15)||!Array.isArray(f.walls)||f.walls.length>2000||!Array.isArray(f.slabs)||f.slabs.length>200||!Array.isArray(f.rooms)||f.rooms.length>500||!Array.isArray(f.dimensions)||f.dimensions.length>1000)fail();
   for(const w of f.walls){id(w.id);if(w.kind!=='wall'||!str(w.name)||!str(w.material)||!point(w.a)||!point(w.b)||!num(wallLength(w),0.2,100)||!num(w.thickness,0.05,1.5)||!num(w.height,1,15)||!Array.isArray(w.openings)||w.openings.length>100)fail();for(const o of w.openings){id(o.id);if(!['door','window'].includes(o.kind)||!str(o.name)||!num(o.position,0,100)||!num(o.width,0.3,10)||!num(o.height,0.3,15)||!num(o.sill,0,15)||!canPlaceOpening(w,o,o.id))fail();}}
   for(const s of f.slabs){id(s.id);if(s.kind!=='slab'||!str(s.name)||!str(s.material)||!num(s.thickness,0.05,1.5)||!Array.isArray(s.points)||s.points.length<3||s.points.length>200||!s.points.every(point)||polygonArea(s.points)<0.1)fail();}
-  for(const r of f.rooms)if(!str(r.name)||!num(r.x)||!num(r.y)||!num(r.w,0.1,100)||!num(r.h,0.1,100))fail();
-  for(const d of f.dimensions){id(d.id);if(!point(d.a)||!point(d.b))fail();}
+  for(const r of f.rooms){id(r.id);if(r.kind!=='room'||!str(r.name)||!num(r.x)||!num(r.y)||!num(r.w,0.1,100)||!num(r.h,0.1,100))fail();}
+  for(const d of f.dimensions){id(d.id);if(d.kind!=='dimension'||!str(d.name)||!point(d.a)||!point(d.b)||!num(d.offset,-100,100))fail();}
+  if(!Array.isArray(f.furniture)||f.furniture.length>2000)fail();
+  for(const e of f.furniture){id(e.id);if(e.kind!=='furniture'||!Object.hasOwn(FURNITURE_TYPES,e.type)||!str(e.name)||!num(e.x)||!num(e.y)||!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.height,.005,15)||!num(e.rotation,-360,360))fail();}
  }
  return value;
 }

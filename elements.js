@@ -1,0 +1,52 @@
+// Shared element operations for the plan, inspector and 3D viewport.
+export const FURNITURE_TYPES={desk:'Рабочий стол',chair:'Стул',table:'Обеденный стол',sofa:'Диван',coffee:'Журнальный столик',bed:'Кровать',plant:'Растение',cabinet:'Кухонный модуль',sink:'Мойка',hob:'Варочная панель',tub:'Ванна',basin:'Раковина',toilet:'Унитаз',washer:'Стиральная машина',stairs:'Лестница',lounger:'Шезлонг',rug:'Ковёр'};
+export const FURNITURE_SIZES={desk:[1.6,.7,.76],chair:[.47,.47,.85],table:[1.55,.95,.76],sofa:[2.9,.95,.9],coffee:[1.55,.67,.45],bed:[1.85,2.1,.55],plant:[.4,.4,1],cabinet:[3.4,.62,.9],sink:[.65,.4,.95],hob:[.45,.7,.95],tub:[.75,1.35,.55],basin:[.49,.39,.85],toilet:[.45,.59,.65],washer:[.6,.6,.85],stairs:[1.13,3.3,2.7],lounger:[.7,1.3,.55],rug:[3.42,1.5,.01]};
+export function makeFurniture(type,x,y,id){const [w,d,height]=FURNITURE_SIZES[type];return {id,kind:'furniture',type,name:FURNITURE_TYPES[type],x,y,w,d,height,rotation:0};}
+function demoFurniture(floor){
+ const items=[];const add=(type,x,y)=>{const f=makeFurniture(type,x,y,`${floor.id}-furniture-${items.length+1}`);items.push(f);return f;};
+ const dining=(x,y)=>{add('table',x,y);for(const dx of [.16,.9]){add('chair',x+dx,y-.4);add('chair',x+dx,y+1.02);}add('chair',x-.4,y+.24);add('chair',x+1.61,y+.24);};
+ if(floor.elevation===0){add('desk',.9,.65);add('chair',1.46,1.53);dining(9.1,2.3);add('rug',.82,7.22);add('sofa',1.1,6);add('coffee',1.75,7.53);dining(8.6,6.7);}else{add('bed',1.2,.75);add('bed',9,.75);add('bed',2.6,6);}
+ add('plant',3.45,.4);add('plant',.35,8.05);add('cabinet',8.25,.23);const side=add('cabinet',11.15,.85);side.w=.5;side.d=1.6;add('sink',9.15,.32);add('hob',11.17,.94);add('tub',.3,3.8);add('basin',1.65,3.76);add('toilet',1.71,4.64);add('washer',2.81,3.8);add('stairs',6.34,.5);
+ if(floor.elevation===0){dining(8.7,9.8);add('plant',.2,10.75);add('plant',11.3,10.75);add('lounger',.6,9.65).rotation=-20;}
+ return items;
+}
+export function migrateElements(project){
+ if(project.contentVersion!==2){
+  for(const floor of project.floors){
+   floor.furniture??=demoFurniture(floor);
+   if(floor.elevation===0){floor.slabs.push({id:`${floor.id}-terrace`,kind:'slab',name:'Терраса',thickness:.16,material:'Дерево',finish:'deck',points:[{x:-.15,y:9.15},{x:12.15,y:9.15},{x:12.15,y:11.3},{x:-.15,y:11.3}]},{id:`${floor.id}-porch`,kind:'slab',name:'Крыльцо',thickness:.16,material:'Бетон',points:[{x:5.2,y:-1.15},{x:6.8,y:-1.15},{x:6.8,y:-.15},{x:5.2,y:-.15}]});}
+   const measured=[[[0,0],[12,0],-1.62],[[0,0],[4.2,0],-1.04],[[4.2,0],[8,0],-1.04],[[8,0],[12,0],-1.04],[[0,9],[0,0],-1.1],[[0,9],[12,9],3.05]];
+   measured.forEach(([a,b,offset],i)=>floor.dimensions.push({id:`${floor.id}-dimension-${i+1}`,kind:'dimension',name:'Размер',a:{x:a[0],y:a[1]},b:{x:b[0],y:b[1]},offset}));
+  }
+  project.contentVersion=2;
+ }
+ for(const f of project.floors){f.furniture??=[];f.rooms.forEach((r,i)=>{r.id??=`${f.id}-room-${i+1}`;r.kind='room';});f.dimensions.forEach(d=>{d.kind='dimension';d.name??='Размер';d.offset??=.5;});}
+ project.id??=globalThis.crypto?.randomUUID?.()||`project-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+ return project;
+}
+export function findElement(floor,id){
+ for(const wall of floor.walls){if(wall.id===id)return {element:wall,collection:'walls'};const opening=wall.openings.find(o=>o.id===id);if(opening)return {element:opening,host:wall,collection:'openings'};}
+ for(const collection of ['slabs','furniture','rooms','dimensions']){const element=floor[collection]?.find(e=>e.id===id);if(element)return {element,collection};}
+ return null;
+}
+export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...floor.slabs,...floor.furniture,...floor.rooms,...floor.dimensions];}
+export function elementPosition(element,host){
+ if(host){const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y);return {x:host.a.x+(host.b.x-host.a.x)*element.position/length,y:host.a.y+(host.b.y-host.a.y)*element.position/length};}
+ if(element.a)return {...element.a};
+ if(element.points)return {x:element.points.reduce((s,p)=>s+p.x,0)/element.points.length,y:element.points.reduce((s,p)=>s+p.y,0)/element.points.length};
+ return {x:element.x,y:element.y};
+}
+export function translateElement(floor,id,dx,dy){
+ const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');
+ if(!Number.isFinite(dx)||!Number.isFinite(dy))throw new Error('Некорректное перемещение.');
+ const {element:e,host}=found;
+ if(host){
+  const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y),delta=(dx*(host.b.x-host.a.x)+dy*(host.b.y-host.a.y))/length;
+  const margin=.08+1e-9;let min=e.width/2+margin,max=length-e.width/2-margin;
+  for(const other of host.openings){if(other.id===id)continue;if(other.position<e.position)min=Math.max(min,other.position+other.width/2+e.width/2+margin);else max=Math.min(max,other.position-other.width/2-e.width/2-margin);}
+  e.position=Math.max(min,Math.min(max,e.position+delta));
+ }else if(e.a){for(const p of [e.a,e.b]){p.x+=dx;p.y+=dy;}}
+ else if(e.points){for(const p of e.points){p.x+=dx;p.y+=dy;}}
+ else{e.x+=dx;e.y+=dy;}
+ return found;
+}

@@ -1,0 +1,14 @@
+const paths={
+ chevron:'m6 9 6 6 6-6',plus:'M12 5v14M5 12h14',minus:'M5 12h14',close:'m6 6 12 12M18 6 6 18',
+ cursor:'m5 3 14 10-7 1-3 7L5 3Z',wall:'M3 6h18v12H3zM3 12h18M8 6v6m8-6v6M12 12v6',door:'M5 21V3h14v18M5 21h14M15 12h.01',window:'M3 3h18v18H3zM12 3v18M3 12h18',
+ layers:'m3 8 9-5 9 5-9 5-9-5Zm0 4 9 5 9-5M3 16l9 5 9-5',dimension:'M3 5v14M21 5v14M3 12h18m-4-3 4 3-4 3M7 9l-4 3 4 3',
+ home:'m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7',section:'m4 19 7-14h9M4 19h16M11 5v14',file:'M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8m-8 4h8',
+ cube:'m12 3 9 5v9l-9 5-9-5V8l9-5Zm0 10 9-5m-9 5L3 8m9 5v9',plan:'M3 4h18v16H3zM7 4v12h14M7 10h7v6M14 4v6',split:'M3 4h18v16H3zM12 4v16',
+ undo:'M9 5 3 10l6 5M3 10h11a6 6 0 0 1 0 12',redo:'m15 5 6 5-6 5m6-5H10a6 6 0 0 0 0 12',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',folder:'M3 6h7l2 3h9v12H3V6Z',
+ 'check-circle':'M22 11.1V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3',eye:'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+ copy:'M8 8h13v13H8zM16 8V3H3v13h5',trash:'M3 6h18M5 6l1 15h12l1-15M9 6V3h6v3M10 10v7m4-7v7',text:'M4 5h16M12 5v15M8 20h8',fit:'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5',
+ rotate:'M21 7v6h-6M3 17v-6h6M5.5 6A8 8 0 0 1 19 5l2 8M3 11l2 8a8 8 0 0 0 13.5-1',grid:'M3 3h18v18H3zM9 3v18m6-18v18M3 9h18M3 15h18',magnet:'M4 4v9a8 8 0 0 0 16 0V4h-5v9a3 3 0 0 1-6 0V4H4Zm0 5h5m6 0h5',
+ lock:'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4', 'panel-left':'M3 4h18v16H3zM9 4v16m7-11-3 3 3 3',edit:'m16 3 5 5-12 12-6 1 1-6L16 3Zm-3 3 5 5',moon:'M21 13A9 9 0 0 1 11 3 9 9 0 1 0 21 13Z',
+ printer:'M6 9V3h12v6M6 17H3V9h18v8h-3M6 14h12v7H6z',help:'M9 9a3 3 0 1 1 5 2.2c-1 .7-2 1.3-2 2.8m0 3h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',info:'M12 11v6m0-10h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',settings:'m9 3-.6 3-2.8 1L3 6l-2 4 2.4 2-0.1 3L1 17l2 4 3-1 2.4 1 .6 3h5l.6-3 2.8-1 2.6 1 2-4-2.4-2 .1-3L22 10l-2-4-3 1-2.4-1L14 3H9Zm6 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0'};
+export function icon(name){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.cube}"/></svg>`;}
+export function hydrateIcons(root=document){root.querySelectorAll('i[data-icon]').forEach(node=>node.innerHTML=icon(node.dataset.icon));}

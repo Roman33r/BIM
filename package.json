@@ -1,0 +1,8 @@
+{
+  "name": "bim-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based architectural modeling workspace prototype",
+  "scripts": {"test": "node --test", "start": "python -m http.server 4173 --bind 127.0.0.1"}
+}

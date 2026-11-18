@@ -31,10 +31,13 @@ jobs:
           node --check project-store.js
           node --check furniture-plan.js
           node --check furniture-scene.js
+          node --check transforms.js
+          node --check snapping.js
+          node --check editor-overlay.js
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js .nojekyll _site/
+          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js .nojekyll _site/
           cp -r assets vendor _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

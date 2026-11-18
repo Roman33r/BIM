@@ -1,6 +1,8 @@
 import * as THREE from './vendor/three.module.js';
 import {wallLength} from './model.js';
 import {buildFurniture} from './furniture-scene.js';
+import {elementFrame,framePoint,elementAxes} from './transforms.js';
+import {findElement} from './elements.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;container.append(renderer.domElement);
  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.1,150),group=new THREE.Group();scene.add(group);
@@ -32,10 +34,15 @@ export function createScene(container,onSelect,gestures={}){
   }
   for(const item of floor.furniture)buildFurniture(THREE,group,item,item.id===id?selectedMat:null);
   for(const room of floor.rooms){
-   if(opts.labels!==false)label(room.name,room.x+room.w/2,.12,room.y+room.h/2,room.id,room.id===id);
-   if(room.id===id){const points=[[room.x,room.y],[room.x+room.w,room.y],[room.x+room.w,room.y+room.h],[room.x,room.y+room.h],[room.x,room.y]].map(([x,z])=>new THREE.Vector3(x-6,.035,z-4.5));const outline=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff}));outline.userData.elementId=room.id;group.add(outline);}
+   const frame=elementFrame(room);if(opts.labels!==false)label(room.name,frame.center.x,.12,frame.center.y,room.id,room.id===id);
+   if(room.id===id){const points=[[0,0],[frame.w,0],[frame.w,frame.h],[0,frame.h],[0,0]].map(([x,y])=>{const p=framePoint(frame,x,y);return new THREE.Vector3(p.x-6,.035,p.y-4.5);});const outline=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff}));outline.userData.elementId=room.id;group.add(outline);}
   }
   if(opts.dimensions!==false)for(const dim of floor.dimensions){const dx=dim.b.x-dim.a.x,dz=dim.b.y-dim.a.y,l=Math.hypot(dx,dz)||1,px=-dz/l*dim.offset,pz=dx/l*dim.offset;const a=new THREE.Vector3(dim.a.x+px-6,.04,dim.a.y+pz-4.5),b=new THREE.Vector3(dim.b.x+px-6,.04,dim.b.y+pz-4.5);const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),new THREE.LineBasicMaterial({color:dim.id===id?0x2164ff:0x8b95a3}));line.userData.elementId=dim.id;group.add(line);label(Math.round(l*1000).toLocaleString('ru-RU'),(dim.a.x+dim.b.x)/2+px,.12,(dim.a.y+dim.b.y)/2+pz,dim.id,dim.id===id);}
+  const selected=findElement(floor,id);
+  function guideLine(a,b,color){const geometry=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x-6,.05,a.y-4.5),new THREE.Vector3(b.x-6,.05,b.y-4.5)]),line=new THREE.Line(geometry,new THREE.LineDashedMaterial({color,dashSize:.15,gapSize:.08,depthTest:false}));line.computeLineDistances();line.renderOrder=10;group.add(line);}
+  if(opts.axes&&selected)for(const axis of elementAxes(selected.element,selected.host))guideLine({x:axis.center.x-axis.direction.x*axis.extent,y:axis.center.y-axis.direction.y*axis.extent},{x:axis.center.x+axis.direction.x*axis.extent,y:axis.center.y+axis.direction.y*axis.extent},0x2696ad);
+  const guideBounds=new THREE.Box3().setFromObject(group);
+  for(const guide of opts.feedback?.guides||[]){let a=guide.a,b=guide.b;if(guide.component==='x'){a={x:guide.a.x,y:guideBounds.min.z+3.5};b={x:guide.a.x,y:guideBounds.max.z+5.5};}if(guide.component==='y'){a={x:guideBounds.min.x+5,y:guide.a.y};b={x:guideBounds.max.x+7,y:guide.a.y};}guideLine(a,b,guide.axis?0x2696ad:0xbc43c5);}
   scene.background=new THREE.Color(dark?0x1b2028:0xf7f8fa);ground.material.color.set(dark?0x202833:0xf3f5f7);if(changedFloor)fitCamera();dirty=true;
  }
  function fitCamera(){const bounds=new THREE.Box3().setFromObject(group);if(bounds.isEmpty()){target.set(-6,1,-4.5);distance=24;}else{bounds.getCenter(target);const size=bounds.getSize(new THREE.Vector3());distance=Math.max(12,size.length()*1.5);}dirty=true;}
@@ -46,7 +53,7 @@ export function createScene(container,onSelect,gestures={}){
  function pick(e){const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);raycaster.params.Line.threshold=.08;raycaster.setFromCamera(pointer,camera);return raycaster.intersectObjects(group.children,true).find(hit=>hit.object.userData.elementId);}
  function groundPoint(e){const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);raycaster.setFromCamera(pointer,camera);const p=raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),new THREE.Vector3());return p?{x:p.x+6,y:p.z+4.5}:null;}
  renderer.domElement.addEventListener('pointerdown',e=>{if(e.button!==0&&e.button!==1)return;const hit=pick(e),point=groundPoint(e),moving=hit&&!e.shiftKey&&e.button===0&&point;drag={x:e.clientX,y:e.clientY,angle,polar,moved:false,moving:!!moving};renderer.domElement.setPointerCapture(e.pointerId);if(moving)gestures.start?.(hit.object.userData.elementId,point);else if(!hit&&!e.shiftKey)onSelect(null);});
- renderer.domElement.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(dx,dy)>4)drag.moved=true;if(drag.moving){if(drag.moved){const point=groundPoint(e);if(point)gestures.move?.(point,e.shiftKey);}}else{angle=drag.angle-dx*.007;polar=Math.max(.25,Math.min(1.47,drag.polar-dy*.005));dirty=true;}});
+ renderer.domElement.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(dx,dy)>4)drag.moved=true;if(drag.moving){if(drag.moved){const point=groundPoint(e);if(point)gestures.move?.(point,e.shiftKey,e.altKey);}}else{angle=drag.angle-dx*.007;polar=Math.max(.25,Math.min(1.47,drag.polar-dy*.005));dirty=true;}});
  renderer.domElement.addEventListener('pointerup',()=>{if(drag?.moving)gestures.end?.();drag=null;});
  renderer.domElement.addEventListener('pointercancel',()=>{if(drag?.moving)gestures.cancel?.();drag=null;});
  renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();distance=Math.max(10,Math.min(100,distance*Math.exp(e.deltaY*.001)));dirty=true;},{passive:false});

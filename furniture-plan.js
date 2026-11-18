@@ -1,8 +1,8 @@
 const rect=(x,y,w,h,attrs='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" ${attrs}/>`;
 const path=d=>`<path d="${d}"/>`;
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
-export function furniturePlan(items,selectedId){return items.map(e=>{
- const {w,d,type}=e,selected=e.id===selectedId;
+export function furniturePlan(items,selectedIds){return items.map(e=>{
+ const {w,d,type}=e,selected=selectedIds.has(e.id);
  let detail='';
  if(type==='sofa')detail=rect(.13,.12,w-.26,.25,'rx=".06"')+[0,1,2].map(i=>rect(.15+i*(w-.3)/3,.43,(w-.3)/3-.035,d-.52,'rx=".05"')).join('');
  else if(type==='chair')detail=path(`M.04 .12H${w-.04}M.04 .2H${w-.04}`);

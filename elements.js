@@ -50,3 +50,36 @@ export function translateElement(floor,id,dx,dy){
  else{e.x+=dx;e.y+=dy;}
  return found;
 }
+
+export function translateSelection(floor, ids, dx, dy){
+ const selected = new Set(ids), openingsByWall = new Map();
+ for (const id of selected) {
+  const found = findElement(floor,id);
+  if (!found) continue;
+  if (!found.host) {
+   translateElement(floor,id,dx,dy);
+   continue;
+  }
+  if (selected.has(found.host.id)) continue;
+  if (!openingsByWall.has(found.host)) openingsByWall.set(found.host,[]);
+  openingsByWall.get(found.host).push(found.element);
+ }
+ for (const [wall, openings] of openingsByWall) {
+  const length = Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
+  const delta = (dx*(wall.b.x-wall.a.x)+dy*(wall.b.y-wall.a.y))/length;
+  let min = -Infinity, max = Infinity;
+  for (const opening of openings) {
+   const margin = .08+1e-9;
+   const left = opening.position-opening.width/2, right = opening.position+opening.width/2;
+   min = Math.max(min,margin-left);
+   max = Math.min(max,length-margin-right);
+   for (const neighbor of wall.openings) {
+    if (selected.has(neighbor.id)) continue;
+    if (neighbor.position < opening.position) min = Math.max(min,neighbor.position+neighbor.width/2+margin-left);
+    else max = Math.min(max,neighbor.position-neighbor.width/2-margin-right);
+   }
+  }
+  const shift = delta < 0 ? Math.min(0,Math.max(min,delta)) : Math.max(0,Math.min(max,delta));
+  for (const opening of openings) opening.position += shift;
+ }
+}

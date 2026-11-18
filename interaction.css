@@ -2,3 +2,18 @@
 .editor-overlay{pointer-events:none}.transform-outline{fill:none;stroke:#2164ff;stroke-width:1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke;opacity:.65}.transform-handle{pointer-events:all}.transform-handle:hover>rect,.transform-handle:hover>circle:not([fill='transparent']){fill:#d7e5ff}.rotation-stem{stroke:#2164ff;stroke-width:1;vector-effect:non-scaling-stroke}.symmetry-axis{stroke:#2696ad;stroke-width:1;stroke-dasharray:11 4 2 4;vector-effect:non-scaling-stroke;opacity:.85}.alignment-guide{stroke:#bc43c5;stroke-width:1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}.alignment-guide.axis-guide{stroke:#2696ad;stroke-dasharray:11 4 2 4}.snap-marker{fill:var(--panel,#fff);stroke:#bc43c5;stroke-width:1.5;vector-effect:non-scaling-stroke}.snap-marker text{stroke:none;fill:#a531b3}.snap-label-bg{stroke:#d5a2da;stroke-width:.6;fill:var(--panel,#fff);vector-effect:non-scaling-stroke}.editor-measure{pointer-events:none;paint-order:stroke;stroke:var(--panel,#fff);stroke-width:3;vector-effect:non-scaling-stroke}.edit-tools{flex-shrink:0}.workspace-toolbar{flex-wrap:wrap;height:auto;min-height:59px;padding-top:9px;padding-bottom:9px}.editor-overlay .transform-handle{touch-action:none}@media(max-width:1200px){.workspace-toolbar{row-gap:7px}}
 
 .snap-marker>path,.snap-marker>circle{vector-effect:non-scaling-stroke;stroke-width:1.5}
+
+.axes-control{position:relative}
+#axes-button{width:auto;gap:3px}
+#axes-button .small{width:12px;height:12px}
+.axes-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:10;min-width:216px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow)}
+.axes-menu label{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer}
+.axes-menu label:hover{background:var(--hover)}
+.axes-menu input{margin:0;accent-color:var(--blue)}
+.axes-menu .axis-master{font-weight:600;border-bottom:1px solid var(--line);margin-bottom:4px;border-radius:0}
+.drawing-surface,#model-container{position:relative}
+.selection-marquee{position:absolute;z-index:3;pointer-events:none;border:1px solid #2164ff;background:#2164ff19}
+.selection-marquee.crossing{border:1px dashed #14967c;background:#14967c20}
+.scene-rotation-handle{position:absolute;z-index:2;display:grid;place-items:center;transform:translate(-50%,-50%);width:26px;height:26px;padding:4px;border:1px solid #2164ff;border-radius:50%;color:#2164ff;background:var(--panel);cursor:grab;touch-action:none}
+.scene-rotation-handle:active{cursor:grabbing}
+.scene-rotation-handle svg{width:100%;height:100%;pointer-events:none}

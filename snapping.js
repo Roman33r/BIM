@@ -1,7 +1,14 @@
-import {findElement,listElements} from './elements.js';
+import {findElement} from './elements.js';
 import {elementAnchors,elementAxes,add,sub,mul,dot,length} from './transforms.js';
-export function snapTargets(floor,excludedId,axes=true){
- const points=[],lines=[];for(const e of listElements(floor)){if(e.id===excludedId)continue;const host=findElement(floor,e.id)?.host;if(host?.id===excludedId)continue;points.push(...elementAnchors(e,host).map(p=>({...p,id:e.id})));if(axes)lines.push(...elementAxes(e,host).map(a=>({...a,id:e.id})));}return {points,lines};
+import {floorElements,elementVisible} from './selection.js';
+export function snapTargets(floor,excludedId,axes=true,options={}){
+ const excluded=new Set(Array.isArray(excludedId)?excludedId:[excludedId]), points=[], lines=[];
+ for(const {element,host} of floorElements(floor)){
+  if(excluded.has(element.id) || excluded.has(host?.id) || !elementVisible(element,options)) continue;
+  points.push(...elementAnchors(element,host).map(p=>({...p,id:element.id})));
+  if(axes && options.axisTypes?.[element.kind]!==false) lines.push(...elementAxes(element,host).map(a=>({...a,id:element.id})));
+ }
+ return {points,lines};
 }
 export function snapPoint(point,targets,tolerance,{alignment=true,axes=true}={}){
  let best=null;for(const target of targets.points){const distance=length(sub(point,target));if(distance<=tolerance&&(!best||distance<best.distance))best={point:{x:target.x,y:target.y},distance,marker:target,label:target.role,guides:[]};}
@@ -12,7 +19,13 @@ export function snapPoint(point,targets,tolerance,{alignment=true,axes=true}={})
  return {point:snapped,distance:length(sub(point,snapped)),guides,label:guides.length?'Выравнивание':'',marker:null};
 }
 export function snapTranslation(floor,id,dx,dy,tolerance,options={}){
- const {element:e,host}=findElement(floor,id),anchors=elementAnchors(e,host),targets=snapTargets(floor,id,options.axes);let pointBest=null,axisBest=null;const align={};
+ const ids=Array.isArray(id)?id:[id];
+ const anchors=options.anchors??ids.flatMap(id=>{
+  const item=findElement(floor,id);
+  return item?elementAnchors(item.element,item.host):[];
+ });
+ const targets=options.targets??snapTargets(floor,ids,options.axes,options);
+ let pointBest=null,axisBest=null;const align={};
  for(const anchor of anchors){const moved={x:anchor.x+dx,y:anchor.y+dy},result=snapPoint(moved,targets,tolerance,options),correction=sub(result.point,moved);
   if(result.marker){const record={...result,correction,anchor:moved};if(result.label==='Ось симметрии'){if(!axisBest||result.distance<axisBest.distance)axisBest=record;}else if(!pointBest||result.distance<pointBest.distance)pointBest=record;}
   else for(const guide of result.guides){const key=guide.component;if(!align[key]||Math.abs(correction[key])<Math.abs(align[key].correction[key]))align[key]={guide,correction};}

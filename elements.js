@@ -48,6 +48,7 @@ export function moveSelectionToFloor(source,target,ids){
  }
  const remaining=new Set((source.structures||[]).map(e=>e.id));
  for(const e of source.structures||[])if(e.mounts){e.mounts=e.mounts.filter(m=>remaining.has(m.capId));if(!e.mounts.length)delete e.mounts;}
+ for(const f of [source,target]){const present=new Set([...f.structures,...f.slabs].map(e=>e.id));for(const e of [...f.structures,...f.slabs])if(e.fixings){e.fixings=e.fixings.filter(connection=>[connection.capId,connection.fastenerId,...connection.accessoryIds].every(id=>present.has(id)));if(!e.fixings.length)delete e.fixings;}}
  return moved;
 }
 export function setOpeningDoor(opening,installed){
@@ -68,6 +69,7 @@ export function translateElement(floor,id,dx,dy){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');
  if(!Number.isFinite(dx)||!Number.isFinite(dy))throw new Error('Некорректное перемещение.');
  const {element:e,host}=found;
+ detachFixings(floor,id);
  if(e.mounts)delete e.mounts;
  if(isPileCap(e)&&e.pileId!==undefined){translateElement(floor,e.pileId,dx,dy);return found;}
  if(host){
@@ -87,6 +89,7 @@ export function translateElement(floor,id,dx,dy){
 
 export function translateSelection(floor, ids, dx, dy){
  const selected = linkedPileSelection(floor,ids), openingsByWall = new Map();
+ const connections=preservedFixings(floor,selected);
  for (const id of selected) {
   const found = findElement(floor,id);
   if (!found || isPileCap(found.element)&&found.element.pileId!==undefined) continue;
@@ -100,6 +103,7 @@ export function translateSelection(floor, ids, dx, dy){
   if (!openingsByWall.has(found.host)) openingsByWall.set(found.host,[]);
   openingsByWall.get(found.host).push(found.element);
  }
+ for(const [e,fixings] of connections)e.fixings=fixings;
  for (const [wall, openings] of openingsByWall) {
   const length = Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
   const delta = (dx*(wall.b.x-wall.a.x)+dy*(wall.b.y-wall.a.y))/length;
@@ -118,4 +122,16 @@ export function translateSelection(floor, ids, dx, dy){
   const shift = delta < 0 ? Math.min(0,Math.max(min,delta)) : Math.max(0,Math.min(max,delta));
   for (const opening of openings) opening.position += shift;
  }
+}
+
+export function detachFixings(floor,id){
+ const linkedIds=new Set([id]),e=findElement(floor,id)?.element;
+ if(e&&isRoundStructure(e)){const cap=pileCapFor(floor,id);if(cap)linkedIds.add(cap.id);}
+ for(const part of [...floor.structures,...floor.slabs]){
+  if(part.id===id)delete part.fixings;
+  else if(part.fixings){part.fixings=part.fixings.filter(f=>![f.capId,f.fastenerId,...f.accessoryIds].some(key=>linkedIds.has(key)));if(!part.fixings.length)delete part.fixings;}
+ }
+}
+export function preservedFixings(floor,selected){
+ return [...floor.structures,...floor.slabs].filter(e=>selected.has(e.id)&&e.fixings?.every(f=>[f.capId,f.fastenerId,...f.accessoryIds].every(id=>selected.has(id)))).map(e=>[e,structuredClone(e.fixings)]);
 }

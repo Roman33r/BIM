@@ -5,6 +5,8 @@ import {wallBlocks} from './model.js';
 import {isPileCap,isRoundStructure,rimBoardSegments} from './structures.js';
 import {materialSpec} from './materials.js';
 import {capHoles,isRingFastener,isFastener} from './hardware.js';
+import {renderHoleXray} from './hole-display.js';
+import {componentHoles,pointInside} from './assembly.js';
 import {boardMountPoints} from './board-mounts.js';
 import {guidePoints,guideDash} from './construction-guides.js';
 
@@ -90,15 +92,15 @@ export function orthographicBounds(floors,view){
  return {x,y,w:Math.max(1,Math.max(...xs)-x+.4),h:Math.max(1,Math.max(...ys)-y+.4)};
 }
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
-export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,dark=false,grid=true,gridStep=.25,textures=true,feedback={},bounds={x:-100,y:-100,w:200,h:200},axes=false,axisTypes}={}){
+export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,dark=false,grid=true,gridStep=.25,textures=true,holeXray=false,feedback={},bounds={x:-100,y:-100,w:200,h:200},axes=false,axisTypes}={}){
  let svg=`<defs><pattern id="elevation-grid" width="${gridStep}" height="${gridStep}" patternUnits="userSpaceOnUse"><path d="M${gridStep} 0H0V${gridStep}" stroke="${dark?'#405064':'#cdd5e0'}" fill="none" stroke-width=".7" vector-effect="non-scaling-stroke"/></pattern></defs>`;
  if(grid)svg+='<rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#elevation-grid)"/>';
  for(const floor of floors)for(const {element:e,parts} of projectedElements(floor,view)){
   const selected=selectedIds.has(e.id),spec=materialSpec(e.material||'Дерево'),fill=selected?'#9cbaff':textures?(dark?spec.dark:spec.base):'#fff';
   const attrs=`fill="${fill}" stroke="${selected?'#2164ff':dark?'#bbc8d9':'#667282'}" stroke-width="${selected?2:1}" vector-effect="non-scaling-stroke"`;
-  const holes=view==='bottom'?(isPileCap(e)?capHoles(e):e.type==='rimBoard'?boardMountPoints(e,floor.structures).map(m=>m.point):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2}]:[]):[];
-  const voids=holes.map(p=>`M${p.x+p.radius} ${-p.y}a${p.radius} ${p.radius} 0 1 0 ${-2*p.radius} 0a${p.radius} ${p.radius} 0 1 0 ${2*p.radius} 0Z`).join('');
-  svg+=`<g data-element="${esc(e.id)}" class="orthographic-element" data-kind="${e.kind}">${parts.map(points=>holes.length?`<path d="M${points.map(p=>`${p.x} ${p.y}`).join('L')}Z${voids}" fill-rule="evenodd" ${attrs}/>`:`<polygon points="${points.map(p=>`${p.x},${p.y}`).join(' ')}" ${attrs}/>`).join('')}</g>`;
+  const holes=view==='bottom'?(isPileCap(e)?capHoles(e):e.drillHoles?.length||e.type==='rimBoard'?componentHoles(e,floor.structures).filter(h=>Math.abs(h.bottom-verticalRange(e)[0])<1e-6):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2}]:[]):[];
+  const voids=points=>holes.filter(p=>pointInside({x:p.x,y:-p.y},points,p.radius*.999)).map(p=>`M${p.x+p.radius} ${-p.y}a${p.radius} ${p.radius} 0 1 0 ${-2*p.radius} 0a${p.radius} ${p.radius} 0 1 0 ${2*p.radius} 0Z`).join('');
+  svg+=`<g data-element="${esc(e.id)}" class="orthographic-element" data-kind="${e.kind}">${parts.map(points=>holes.length?`<path d="M${points.map(p=>`${p.x} ${p.y}`).join('L')}Z${voids(points)}" fill-rule="evenodd" ${attrs}/>`:`<polygon points="${points.map(p=>`${p.x},${p.y}`).join(' ')}" ${attrs}/>`).join('')}</g>`;
  }
  for(const floor of floors)for(const guide of floor.construction||[]){
   const points=guidePoints(guide).map(p=>projectView({...p,z:floor.elevation},view));if(!points.length)continue;
@@ -109,6 +111,7 @@ export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,d
   const host=floor.walls.find(w=>w.openings.some(o=>o.id===e.id));
   for(const {center:c,direction:d,extent} of projectedElementAxes(floor,e,view,host))svg+=`<path d="M${c.x-d.x*extent} ${c.y-d.y*extent}L${c.x+d.x*extent} ${c.y+d.y*extent}" class="symmetry-axis" pointer-events="none"/>`;
  }
+ if(holeXray)svg+=renderHoleXray(floors,view,dark);
  const shown=feedbackForView(feedback,view);
  for(const guide of shown.guides||[]){let {a,b}=guide;
   if(guide.component==='x'){a={x:a.x,y:bounds.y};b={x:a.x,y:bounds.y+bounds.h};}

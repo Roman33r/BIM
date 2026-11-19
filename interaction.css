@@ -27,7 +27,7 @@
 .floor-form select{width:100%;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);padding:9px 10px}
 .floor-form label{margin-top:5px}
 .floor-form .form-error{margin:3px 0 0;color:var(--text);border-left:2px solid #d25454;padding-left:9px}
-.opening-action{width:100%;margin-top:8px}
+.opening-action{width:100%;margin-top:8px;white-space:normal;min-height:36px;height:auto;padding:9px 10px;line-height:1.4}
 .editor-menu{position:fixed;right:auto;width:max-content;min-width:210px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto}
 .editor-menu button:focus-visible{outline-offset:-2px;background:var(--hover)}
 .structure-picker{display:grid;gap:7px}
@@ -75,3 +75,6 @@
 .cube-caption{position:absolute;bottom:4px;left:26px;right:26px;text-align:center;font-size:10px;color:var(--secondary);pointer-events:none}
 .cube-opposite{cursor:pointer;outline:none}.cube-opposite rect{fill:var(--panel,#fff);stroke:var(--line,#cdd5e0)}.cube-opposite text{fill:var(--secondary,#667282);font-size:15px;pointer-events:none}.cube-opposite:hover rect,.cube-opposite:focus rect{stroke:#2164ff}
 .plan-pane .north-indicator,#reset-camera{display:none}
+.connection-properties{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}.connection-properties h3{font-size:12px;margin:0 0 8px;font-weight:600}
+@media(max-width:1100px){#surface-placement-button span,#hole-xray-button span{display:none}}
+@media(max-width:760px){#import-button{display:inline-flex;width:30px;padding:0;justify-content:center}#import-button span{display:none}}

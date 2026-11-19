@@ -5,6 +5,7 @@ import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structu
 import {isFastener,validateCapHoles} from './hardware.js';
 import {canTiltElement,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
+import {syncPartFixings} from './assembly.js';
 import {syncBoardMounts} from './board-mounts.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
@@ -114,6 +115,7 @@ export function validateProject(value){
   }
   syncPileCaps(f);
   syncBoardMounts(f);
+  syncPartFixings(f);
   if(!Array.isArray(f.construction)||f.construction.length>2000)fail();
   for(const e of f.construction){
    if(!e||e.kind!=='guide'||!str(e.name))fail();

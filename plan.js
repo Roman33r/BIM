@@ -1,5 +1,8 @@
 import {openingSpan,wallLength,wallSegments} from './model.js';
 import {furniturePlan} from './furniture-plan.js';
+import {renderHoleXray} from './hole-display.js';
+import {componentHoles,solidBodies,pointInside} from './assembly.js';
+import {verticalRange} from './vertical.js';
 import {editorOverlay} from './editor-overlay.js';
 import {elementFrame,elementFootprint,framePoint,dot,sub} from './transforms.js';
 import {angleGeometry,angleLabel,angleRadius} from './annotations.js';
@@ -45,6 +48,11 @@ function constructionPlan(floor,selectedIds,unit){
  return output;
 }
 function structureShape(element,attrs='',members=[]){
+ if(element.drillHoles?.length){
+  const top=verticalRange(element)[1],holes=componentHoles(element,members).filter(h=>Math.abs(h.top-top)<1e-6);
+  return solidBodies(element,members).map(body=>`<path class="drilled-component" d="M${body.footprint.map(p=>`${p.x} ${p.y}`).join('L')}Z${holes.filter(h=>pointInside(h,body.footprint,h.radius*.999)).map(({x,y,radius:r})=>`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`).join('')}" fill-rule="evenodd" ${attrs}/>`).join('');
+ }
+
  if(element.type==='rimBoard'&&element.mounts?.length){
   const outer=elementFootprint(element),holes=boardMountPoints(element,members).map(m=>m.point);
   return `<path class="mounted-rim-board" d="M${outer.map(p=>`${p.x} ${p.y}`).join('L')}Z${holes.map(({x,y,radius:r})=>`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`).join('')}" fill-rule="evenodd" ${attrs}/>`;
@@ -136,7 +144,7 @@ function floorReference(floor,color){
  for(const contour of floorTiltProjections(floor).values())outlines+=close(contour);
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
-export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,dimensionDraft,structurePreview,measurement,drawMeasurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
+export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,holeXray=false,draft=[],angleDraft,dimensionDraft,structurePreview,measurement,drawMeasurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
  const colors=dark?{'--plan-text':'#dce5f2','--plan-dimension':'#778799','--wall-fill':'#737d8d','--wall-line':'#9ca9bc','--furniture-stroke':'#8794a6','--furniture-fill':'#2b3441','--plant-fill':'#394b40','--plant-stroke':'#758f7c'}:{'--plan-text':'#313b48','--plan-dimension':'#9ba3ae','--wall-fill':'#7f848c','--wall-line':'#525b67','--furniture-stroke':'#939b9f','--furniture-fill':'#fafbf9','--plant-fill':'#f0f5ee','--plant-stroke':'#a0b19c'};
  if(!textures){
   colors['--furniture-fill']='#fff';colors['--plant-fill']='#fff';
@@ -151,7 +159,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   ${tilePattern}</defs>`;
  const surfaceFill=material=>textures?`url(#material-${materialSpec(material).id})`:'#fff';
  let content=grid?rect(-10000,-10000,20000,20000,'fill="url(#grid-major)"'):'';
- for(const slab of floor.slabs)content+=`<polygon points="${coords(slab.points)}" fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"/>`;
+ for(const slab of floor.slabs){const attrs=`fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"`;content+=slab.drillHoles?.length?structureShape(slab,attrs,floor.structures):`<polygon points="${coords(slab.points)}" ${attrs}/>`;}
  for(const reference of referenceFloors)content+=floorReference(reference,reference.elevation>=floor.elevation?(dark?'#7ca6e7':'#678acc'):(dark?'#c49bd5':'#a16eb8'));
  const structures=floor.structures||[];
  for(const e of structures)if(e.kind==='foundation'&&!isPileCap(e))content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
@@ -218,6 +226,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   content+=`<g pointer-events="none" style="--plan-text:#2164ff;--plan-dimension:#2164ff">${mark}${b?angularDimension({vertex,a,b,radius},false):a?trace([vertex,a],'stroke="#2164ff" stroke-width=".024"'):''}</g>`;
  }
  content+=constructionPlan(floor,selectedIds,unit);
+ if(holeXray)content+=renderHoleXray([...referenceFloors,floor],'top',dark);
  content+=editorOverlay(floor,{selectedId,axes,axisTypes,labels,dimensions,interactive,unit,feedback,bounds});
  if(dimensions&&interactive)content+=pileSelectionOverlay(floor,selectedIds,unit);
  if(pileArea){

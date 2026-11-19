@@ -13,6 +13,8 @@ import {verticalRange,canMoveVertical} from './vertical.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
 import {isFastener,fastenerRange,capGeometry,fastenerObject} from './hardware.js';
+import {holeVolumes} from './hole-display.js';
+import {componentGeometries} from './assembly.js';
 import {boardGeometry} from './board-mounts.js';
 import {VIEW_PRESETS,cameraStep,projectView,unprojectView} from './views.js';
 export function createScene(container,onSelect,gestures={}){
@@ -118,6 +120,12 @@ export function createScene(container,onSelect,gestures={}){
   blade.setIndex(indices);blade.computeVertexNormals();
   addPileMesh(blade,bottom);
  }
+ function buildDrilled(layer,e,mat,members){
+  for(const {geometry,top} of componentGeometries(THREE,e,members)){
+   geometry.rotateX(Math.PI/2);const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(-6,top,-4.5);mesh.userData.elementId=e.id;mesh.castShadow=true;mesh.receiveShadow=true;layer.add(mesh);
+   mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry),plainSeams));
+  }
+ }
  function buildStructure(layer,e,selected,textured,members=[]){
   const shape=STRUCTURE_TYPES[e.type].shape,mat=material(e.material,selected,textured),bottom=e.elevation-e.height;
   if(isFastener(e)){
@@ -127,6 +135,7 @@ export function createScene(container,onSelect,gestures={}){
    const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(e.x-6,e.elevation,e.y-4.5);mesh.rotation.y=-e.rotation*Math.PI/180;
    mesh.userData.elementId=e.id;mesh.castShadow=true;mesh.receiveShadow=true;layer.add(mesh);
    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry),selected?apertureOutline:plainSeams));
+  }else if(e.drillHoles?.length){buildDrilled(layer,e,mat,members);
   }else if(e.type==='rimBoard'){
    const geometry=boardGeometry(THREE,e,members);geometry.rotateX(Math.PI/2);
    const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(e.a.x-6,e.elevation,e.a.y-4.5);mesh.rotation.y=-Math.atan2(e.b.y-e.a.y,e.b.x-e.a.x);mesh.userData.elementId=e.id;mesh.castShadow=true;mesh.receiveShadow=true;layer.add(mesh);
@@ -165,7 +174,13 @@ export function createScene(container,onSelect,gestures={}){
  }
  function buildLevel(layer,floor,ids,opts,annotate){
   const heightLimit=1.15,textured=opts.textures!==false;
-  for(const slab of floor.slabs)extrudedPlate(tiltedLayer(layer,slab),slab.points,slab.thickness,slab.baseElevation||0,material(slab.material,ids.has(slab.id),textured),slab.id);
+  for(const slab of floor.slabs){const target=tiltedLayer(layer,slab),mat=material(slab.material,ids.has(slab.id),textured);if(slab.drillHoles?.length)buildDrilled(target,slab,mat,floor.structures);else extrudedPlate(target,slab.points,slab.thickness,slab.baseElevation||0,mat,slab.id);}
+  if(opts.holeXray)for(const hole of holeVolumes({...floor,elevation:0})){
+   const vertices=[],add=(a,b)=>vertices.push(new THREE.Vector3(a.x-6,a.z,a.y-4.5),new THREE.Vector3(b.x-6,b.z,b.y-4.5));
+   for(const loop of hole.loops)loop.forEach((p,i)=>add(p,loop[(i+1)%loop.length]));
+   for(const i of [0,8,16,24])add(hole.loops[0][i],hole.loops[1][i]);
+   const line=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),new THREE.LineDashedMaterial({color:opts.dark?0x7ee4ef:0x087b99,dashSize:.006,gapSize:.004,depthTest:false,depthWrite:false}));line.computeLineDistances();line.renderOrder=25;line.userData.holeXray=true;line.raycast=()=>{};layer.add(line);
+  }
   const structures=floor.structures||[],structuresById=new Map(structures.map(e=>[e.id,e]));
   for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured,structures);
 

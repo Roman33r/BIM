@@ -1,4 +1,4 @@
-import {findElement} from './elements.js';
+import {findElement,detachFixings} from './elements.js';
 import {angleGeometry} from './annotations.js';
 import {isLinearStructure,isRoundStructure,isPileCap,pileFootprintDiameter} from './structures.js';
 import {guidePoints} from './construction-guides.js';
@@ -97,6 +97,7 @@ export function transformHandles(e,host,unit=.02){
 export function rotateElement(floor,id,degrees){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found;if(host)throw new Error('Поворот проёма определяется стеной.');
  delete e.mounts;
+ detachFixings(floor,id);
  const f=elementFrame(e),center=f.center;
  if(e.kind==='guide'&&e.type==='point')return found;
  if(e.a){e.a=rotatePoint(e.a,center,degrees);e.b=rotatePoint(e.b,center,degrees);}

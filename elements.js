@@ -1,3 +1,5 @@
+import {isPileCap,isRoundStructure,linkedPileSelection,pileCapFor} from './structures.js';
+
 // Shared element operations for the plan, inspector and 3D viewport.
 export const FURNITURE_TYPES={desk:'Рабочий стол',chair:'Стул',table:'Обеденный стол',sofa:'Диван',coffee:'Журнальный столик',bed:'Кровать',plant:'Растение',cabinet:'Кухонный модуль',sink:'Мойка',hob:'Варочная панель',tub:'Ванна',basin:'Раковина',toilet:'Унитаз',washer:'Стиральная машина',stairs:'Лестница',lounger:'Шезлонг',rug:'Ковёр'};
 export const FURNITURE_SIZES={desk:[1.6,.7,.76],chair:[.47,.47,.85],table:[1.55,.95,.76],sofa:[2.9,.95,.9],coffee:[1.55,.67,.45],bed:[1.85,2.1,.55],plant:[.4,.4,1],cabinet:[3.4,.62,.9],sink:[.65,.4,.95],hob:[.45,.7,.95],tub:[.75,1.35,.55],basin:[.49,.39,.85],toilet:[.45,.59,.65],washer:[.6,.6,.85],stairs:[1.13,3.3,2.7],lounger:[.7,1.3,.55],rug:[3.42,1.5,.01]};
@@ -32,7 +34,7 @@ export function findElement(floor,id){
 }
 export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...FLOOR_COLLECTIONS.slice(1).flatMap(key=>floor[key]||[])];}
 export function moveSelectionToFloor(source,target,ids){
- const selected=new Set(ids),moved=[];
+ const selected=linkedPileSelection(source,ids),moved=[];
  for(const key of FLOOR_COLLECTIONS){
   const entities=source[key]||[],items=entities.filter(e=>selected.has(e.id));
   if(!items.length)continue;
@@ -63,6 +65,7 @@ export function translateElement(floor,id,dx,dy){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');
  if(!Number.isFinite(dx)||!Number.isFinite(dy))throw new Error('Некорректное перемещение.');
  const {element:e,host}=found;
+ if(isPileCap(e)&&e.pileId!==undefined){translateElement(floor,e.pileId,dx,dy);return found;}
  if(host){
   const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y),delta=(dx*(host.b.x-host.a.x)+dy*(host.b.y-host.a.y))/length;
   const margin=.08+1e-9;let min=e.width/2+margin,max=length-e.width/2-margin;
@@ -71,14 +74,18 @@ export function translateElement(floor,id,dx,dy){
  }else if(e.a){for(const p of e.mode==='angle'?[e.a,e.vertex,e.b]:[e.a,e.b]){p.x+=dx;p.y+=dy;}}
  else if(e.points){for(const p of e.points){p.x+=dx;p.y+=dy;}}
  else{e.x+=dx;e.y+=dy;}
+ if(isRoundStructure(e)){
+  const cap=pileCapFor(floor,e.id);
+  if(cap){cap.x=e.x;cap.y=e.y;}
+ }
  return found;
 }
 
 export function translateSelection(floor, ids, dx, dy){
- const selected = new Set(ids), openingsByWall = new Map();
+ const selected = linkedPileSelection(floor,ids), openingsByWall = new Map();
  for (const id of selected) {
   const found = findElement(floor,id);
-  if (!found) continue;
+  if (!found || isPileCap(found.element)&&found.element.pileId!==undefined) continue;
   if (!found.host) {
    translateElement(floor,id,dx,dy);
    continue;

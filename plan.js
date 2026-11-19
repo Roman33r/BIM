@@ -5,7 +5,8 @@ import {elementFrame,elementFootprint,framePoint,dot,sub} from './transforms.js'
 import {angleGeometry,angleLabel,angleRadius} from './annotations.js';
 import {hiddenWallEnds} from './wall-overlaps.js';
 import {materialPatterns,materialSpec} from './materials.js';
-import {isRoundStructure} from './structures.js';
+import {isPileCap,isRoundStructure,pileFootprintDiameter} from './structures.js';
+import {segmentMeasurement} from './measurements.js';
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const n=value=>Number(value.toFixed(4));
 const path=(d,attrs='')=>`<path d="${d}" ${attrs}/>`;
@@ -19,14 +20,17 @@ function dimension(a,b,offset=0.6){
 const coords=points=>points.map(p=>`${n(p.x)},${n(p.y)}`).join(' ');
 const trace=(points,attrs='')=>`<polyline points="${coords(points)}" ${attrs}/>`;
 function structureShape(element,attrs=''){
- if(isRoundStructure(element))return `<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(element.diameter/2)}" ${attrs}/>`;
+ if(isRoundStructure(element))return `<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(pileFootprintDiameter(element)/2)}" ${attrs}/>`;
  return `<polygon points="${coords(elementFootprint(element))}" ${attrs}/>`;
 }
 function structurePlan(element,selected,fill,dark){
  const foundation=element.kind==='foundation',stroke=selected?'#2164ff':dark?'#b8c9dd':'#54677c';
  const attrs=`fill="${fill}" fill-opacity="${foundation&&!selected?.72:1}" stroke="${stroke}" stroke-width="${selected?1.9:1.2}"`
   +(foundation?' stroke-dasharray="5 3"':'')+' vector-effect="non-scaling-stroke"';
- let geometry=structureShape(element,attrs);
+ let geometry=element.type==='screwPile'
+  ?structureShape(element,`fill="transparent" stroke="${stroke}" stroke-dasharray="4 3" stroke-width="${selected?1.9:1.2}" vector-effect="non-scaling-stroke"`)
+   +`<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(element.diameter/2)}" fill="${fill}" stroke="${stroke}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`
+  :structureShape(element,attrs);
  if(element.a&&element.thickness<.15){
   geometry+=trace([element.a,element.b],'stroke="transparent" fill="none" stroke-width="9" vector-effect="non-scaling-stroke"');
  }
@@ -38,6 +42,18 @@ function angularDimension(d,interactive){
  return `<g fill="none" stroke="var(--plan-dimension)" stroke-width=".024">${lines}</g>`
   +text(label.x,label.y,angleLabel(value),'class="angle-label" fill="var(--plan-text)" font-size=".22" text-anchor="middle" dominant-baseline="middle"')
   +(interactive?`<g fill="none" stroke="transparent" stroke-width=".2">${lines}</g>`:'');
+}
+function measurementOverlay({a,b},unit,dark){
+ const length=segmentMeasurement(a,b).distance;
+ if(length<1e-8)return '';
+ const color=dark?'#63d3c7':'#087f76',dot=p=>`<circle cx="${n(p.x)}" cy="${n(p.y)}" r="${n(4*unit)}" fill="${color}" stroke="var(--canvas,#fff)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+ const distance=Math.round(length*1000).toLocaleString('ru-RU')+' мм';
+ return `<g class="ruler-measurement" pointer-events="none" fill="none">
+  ${trace([a,{x:b.x,y:a.y},b],`stroke="${color}" stroke-dasharray="4 4" stroke-width="1" opacity=".65" vector-effect="non-scaling-stroke"`)}
+  ${trace([a,b],`stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"`)}
+  ${dot(a)}${dot(b)}
+  ${text((a.x+b.x)/2,(a.y+b.y)/2-11*unit,distance,`class="editor-measure" fill="${color}" font-size="${12*unit}" text-anchor="middle"`)}
+ </g>`;
 }
 function floorReference(floor,color){
  const close=points=>trace([...points,points[0]]);
@@ -52,7 +68,7 @@ function floorReference(floor,color){
  }
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
-export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
+export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,measurement,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
  const colors=dark?{'--plan-text':'#dce5f2','--plan-dimension':'#778799','--wall-fill':'#737d8d','--wall-line':'#9ca9bc','--furniture-stroke':'#8794a6','--furniture-fill':'#2b3441','--plant-fill':'#394b40','--plant-stroke':'#758f7c'}:{'--plan-text':'#313b48','--plan-dimension':'#9ba3ae','--wall-fill':'#7f848c','--wall-line':'#525b67','--furniture-stroke':'#939b9f','--furniture-fill':'#fafbf9','--plant-fill':'#f0f5ee','--plant-stroke':'#a0b19c'};
  if(!textures){
   colors['--furniture-fill']='#fff';colors['--plant-fill']='#fff';
@@ -65,7 +81,8 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  for(const slab of floor.slabs)content+=`<polygon points="${coords(slab.points)}" fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"/>`;
  for(const reference of referenceFloors)content+=floorReference(reference,reference.elevation>=floor.elevation?(dark?'#7ca6e7':'#678acc'):(dark?'#c49bd5':'#a16eb8'));
  const structures=floor.structures||[];
- for(const e of structures)if(e.kind==='foundation')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
+ for(const e of structures)if(e.kind==='foundation'&&!isPileCap(e))content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
+ for(const e of structures)if(isPileCap(e))content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
  for(const room of floor.rooms){const transform=`transform="translate(${room.x} ${room.y}) rotate(${room.rotation||0})"`;if(textures&&room.name==='Санузел')content+=rect(0,0,room.w,room.h,`${transform} fill="url(#tiles)" pointer-events="none"`);if(selectedIds.has(room.id))content+=rect(0,0,room.w,room.h,`${transform} fill="#2164ff0b" stroke="#2164ff" stroke-width=".025" stroke-dasharray=".1 .06" pointer-events="none"`);}
  content+=furniturePlan(floor.furniture,selectedIds);
  const hidden=hiddenWallEnds(floor.walls), hiddenByWall=new Map();
@@ -115,6 +132,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   content+=`<g pointer-events="none" style="--plan-text:#2164ff;--plan-dimension:#2164ff">${mark}${b?angularDimension({vertex,a,b,radius},false):a?trace([vertex,a],'stroke="#2164ff" stroke-width=".024"'):''}</g>`;
  }
  content+=editorOverlay(floor,{selectedId,axes,axisTypes,labels,dimensions,interactive,unit,feedback,bounds});
+ if(measurement)content+=measurementOverlay(measurement,unit,dark);
  return {content:defs+`<g style="${Object.entries(colors).map(([k,v])=>k+':'+v).join(';')}" font-family="Segoe UI,Arial,sans-serif">${content}</g>`};
 }
 export function planBounds(floor,referenceFloors=[]){
@@ -134,4 +152,4 @@ export function planBounds(floor,referenceFloors=[]){
  for(const p of points){left=Math.min(left,p.x);right=Math.max(right,p.x);top=Math.min(top,p.y);bottom=Math.max(bottom,p.y);}
  return {x:left-1,y:top-1.2,w:Math.max(4,right-left+2),h:Math.max(4,bottom-top+2.4)};
 }
-export function exportSVG(floor,options){const b=planBounds(floor);return `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1500" viewBox="${b.x} ${b.y} ${b.w} ${b.h}" style="--canvas:#fff;background:white">${renderPlan(floor,{...options,dark:false,grid:false,selectedId:null,selectedIds:new Set(),interactive:false,axes:false,feedback:{}}).content}</svg>`;}
+export function exportSVG(floor,options){const b=planBounds(floor);return `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1500" viewBox="${b.x} ${b.y} ${b.w} ${b.h}" style="--canvas:#fff;background:white">${renderPlan(floor,{...options,dark:false,grid:false,selectedId:null,selectedIds:new Set(),interactive:false,axes:false,measurement:null,feedback:{}}).content}</svg>`;}

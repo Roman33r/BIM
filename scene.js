@@ -7,7 +7,7 @@ import {icon} from './icons.js';
 import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
-import {STRUCTURE_TYPES,isStructure,memberProfile} from './structures.js';
+import {STRUCTURE_TYPES,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -91,6 +91,24 @@ export function createScene(container,onSelect,gestures={}){
   const mesh=new THREE.Mesh(geometry,mat);
   mesh.position.y=top;mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=id;layer.add(mesh);
  }
+ function buildPile(layer,e,bottom,mat){
+  const radius=e.diameter/2,tip=e.type==='screwPile'?screwTipHeight(e):0;
+  const addPileMesh=(geometry,y)=>{
+   const mesh=new THREE.Mesh(geometry,mat);
+   mesh.position.set(e.x-6,y,e.y-4.5);
+   mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=e.id;layer.add(mesh);
+  };
+  addPileMesh(new THREE.CylinderGeometry(radius,radius,e.height-tip,32),bottom+(e.height+tip)/2);
+  if(!tip)return;
+  addPileMesh(new THREE.CylinderGeometry(radius,0,tip,32),bottom+tip/2);
+  const {vertices,indices}=screwBladeMesh(e),uv=[];
+  for(let i=0;i<vertices.length;i+=3)uv.push(vertices[i],vertices[i+2]);
+  const blade=new THREE.BufferGeometry();
+  blade.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));
+  blade.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  blade.setIndex(indices);blade.computeVertexNormals();
+  addPileMesh(blade,bottom);
+ }
  function buildStructure(layer,e,selected,textured){
   const shape=STRUCTURE_TYPES[e.type].shape,mat=material(e.material,selected,textured),bottom=e.elevation-e.height;
   if(shape==='line'){
@@ -99,11 +117,8 @@ export function createScene(container,onSelect,gestures={}){
     localBox(layer,e,0,length,bottom+profile.bottom,bottom+profile.top,mat,e.id,profile.width,profile.offset);
    }
   }else if(shape==='contour')extrudedPlate(layer,e.points,e.height,e.elevation,mat,e.id);
-  else if(shape==='round'){
-   const radius=e.diameter/2,mesh=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,e.height,32),mat);
-   mesh.position.set(e.x-6,bottom+e.height/2,e.y-4.5);
-   mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=e.id;layer.add(mesh);
-  }else{
+  else if(shape==='round')buildPile(layer,e,bottom,mat);
+  else{
    const center=elementFrame(e).center,mesh=box(layer,e.w,e.height,e.d,center.x-6,bottom+e.height/2,center.y-4.5,mat,e.id);
    mesh.rotation.y=-e.rotation*Math.PI/180;
   }
@@ -202,7 +217,7 @@ export function createScene(container,onSelect,gestures={}){
   for(const guide of opts.feedback?.guides||[]){let a=guide.a,b=guide.b;if(guide.component==='x'){a={x:guide.a.x,y:guideBounds.min.z+3.5};b={x:guide.a.x,y:guideBounds.max.z+5.5};}if(guide.component==='y'){a={x:guideBounds.min.x+5,y:guide.a.y};b={x:guideBounds.max.x+7,y:guide.a.y};}guideLine(a,b,guide.axis?0x2696ad:0xbc43c5);}
   scene.background=new THREE.Color(dark?0x1b2028:0xf7f8fa);ground.material.color.set(dark?0x202833:0xf3f5f7);if(fit)fitCamera();dirty=true;
  }
- function fitCamera(){const bounds=new THREE.Box3().setFromObject(group);if(bounds.isEmpty()){target.set(-6,(currentFloor?.elevation??0)+1,-4.5);distance=24;}else{bounds.getCenter(target);const size=bounds.getSize(new THREE.Vector3());distance=Math.max(12,size.length()*1.5);}dirty=true;}
+ function fitCamera(){const bounds=new THREE.Box3().setFromObject(group);if(bounds.isEmpty()){target.set(-6,(currentFloor?.elevation??0)+1,-4.5);distance=24;}else{bounds.getCenter(target);const size=bounds.getSize(new THREE.Vector3());distance=Math.max(.6,size.length()*1.5);}dirty=true;}
  function label(layer,text,x,y,z,id,selected){const canvas=document.createElement('canvas');canvas.width=512;canvas.height=96;const ctx=canvas.getContext('2d');ctx.fillStyle=dark?'#e6edf7':'#344257';if(selected)ctx.fillStyle='#2164ff';ctx.font='500 28px Segoe UI, Arial';ctx.textAlign='center';ctx.fillText(text,256,58);const texture=new THREE.CanvasTexture(canvas);const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:true}));sprite.position.set(x-6,y,z-4.5);sprite.scale.set(1.85,.35,1);sprite.userData.elementId=id;layer.add(sprite);}
  function resize(){const w=container.clientWidth,h=container.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();dirty=true;}
  const observer=new ResizeObserver(resize);observer.observe(container);
@@ -328,6 +343,6 @@ export function createScene(container,onSelect,gestures={}){
  }
  container.addEventListener('pointercancel',cancelDrag);
  container.addEventListener('lostpointercapture',cancelDrag);
- renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();distance=Math.max(2,Math.min(Math.max(300,distance),distance*Math.exp(e.deltaY*.001)));dirty=true;},{passive:false});
+ renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();distance=Math.max(.55,Math.min(Math.max(300,distance),distance*Math.exp(e.deltaY*.001)));dirty=true;},{passive:false});
  frameLoop();return {update:build,resize,cancelSelection,reset(){angle=.76;polar=.79;fitCamera();},facade(){angle=Math.PI;polar=1.47;fitCamera();},dispose(){cancelAnimationFrame(raf);observer.disconnect();clearLayers();for(const texture of textures.values())texture.dispose();for(const material of sharedMaterials)material.dispose();renderer.dispose();}};
 }

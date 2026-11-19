@@ -39,10 +39,11 @@ jobs:
           node --check wall-overlaps.js
           node --check materials.js
           node --check structures.js
+          node --check measurements.js
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js .nojekyll _site/
+          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js measurements.js .nojekyll _site/
           cp -r assets vendor _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

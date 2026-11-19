@@ -3,21 +3,24 @@ import {renderPlan,exportSVG,planBounds} from './plan.js';
 import {hydrateIcons} from './icons.js';
 import {findElement,listElements,elementPosition,translateElement,translateSelection,makeFurniture,setOpeningDoor,moveSelectionToFloor,FLOOR_COLLECTIONS,FURNITURE_TYPES} from './elements.js';
 import {loadProjects,saveProjects,CATALOG_KEY,LEGACY_KEY} from './project-store.js';
-import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,normalAngle,length,sub,isSimplePolygon} from './transforms.js';
+import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,setElementAngle,normalAngle,length,sub,isSimplePolygon} from './transforms.js';
 import {snapTargets,snapPoint,snapTranslation,snapWallTranslation} from './snapping.js';
 import {AXIS_TYPES,extendSelection,selectInPlan,selectionBounds,showSelectionBox} from './selection.js';
 import {angleLabel,angleRadius,angleValue} from './annotations.js';
 import {materialNames} from './materials.js';
-import {STRUCTURE_TYPES,isStructure,isRoundStructure,makeStructure} from './structures.js';
+import {STRUCTURE_TYPES,isStructure,isRoundStructure,isPileCap,linkedPileSelection,makeStructure,pileCapFor} from './structures.js';
+import {rulerTicks,segmentMeasurement} from './measurements.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
 const fmt=(value,digits=0)=>Number(value).toLocaleString('ru-RU',{maximumFractionDigits:digits});
 const escapeHTML=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid:true,labels:true,dimensions:true,snap:true,axes:true,guides:true,allFloors:false,textures:true,axisTypes:{}};
+let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid:true,labels:true,dimensions:true,snap:true,axes:true,guides:true,allFloors:false,textures:true,rulers:true,axisTypes:{}};
 try{({project,projects}=loadProjects(localStorage));const prefs=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}');for(const k of Object.keys(preferences))if(typeof prefs[k]==='boolean'&&k!=='axisTypes')preferences[k]=prefs[k];for(const kind of Object.keys(AXIS_TYPES))if(prefs.axisTypes?.[kind]===false)preferences.axisTypes[kind]=false;}catch{loadWarning='Не удалось прочитать локальное сохранение. Открыт пример; исходное сохранение не изменено.';}
 let floorId=project.floors[0].id,tool='select',view='plan',draft=[],hover=null,pan=null,spaceHeld=false,section=false,scene=null,scenePromise=null;
 let structureType='pile';
+let measuredLine=null;
+let inspectorTab='geometry';
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
 let cursorPoint={x:0,y:0};
@@ -50,8 +53,37 @@ function select(id,extend=false){
 }
 function updateEditButtons(){$('undo').disabled=!history.length;$('redo').disabled=!future.length;$('copy-button').disabled=!selectedIds.size;$('delete-button').disabled=!selectedIds.size;}
 function fitPlan(){baseCamera=planBounds(floor(),otherFloors());camera={...baseCamera};renderPlanView();}
-function updateViewBox(){$('plan-svg').setAttribute('viewBox',`${camera.x} ${camera.y} ${camera.w} ${camera.h}`);$('zoom-value').textContent=fmt(baseCamera.w/camera.w*100)+'%';}
-function zoom(factor,center){const next=camera.w*factor;if(next<2||next>100)return;const anchor=center||{x:camera.x+camera.w/2,y:camera.y+camera.h/2};camera.x=anchor.x+(camera.x-anchor.x)*factor;camera.y=anchor.y+(camera.y-anchor.y)*factor;camera.w*=factor;camera.h*=factor;renderPlanView();}
+function updateViewBox(){$('plan-svg').setAttribute('viewBox',`${camera.x} ${camera.y} ${camera.w} ${camera.h}`);$('zoom-value').textContent=fmt(baseCamera.w/camera.w*100)+'%';renderRulers();}
+function renderRulers(){
+ const matrix=$('plan-svg').getScreenCTM(),visible=preferences.rulers&&matrix?.a>0&&$('drawing-surface').clientWidth>0;
+ for(const id of ['plan-ruler-x','plan-ruler-y','plan-ruler-unit'])$(id).hidden=!visible;
+ if(!visible)return;
+ for(const axis of ['x','y']){
+  const horizontal=axis==='x',node=$('plan-ruler-'+axis),bounds=node.getBoundingClientRect();
+  const zero=horizontal?matrix.e-bounds.left:matrix.f-bounds.top,size=horizontal?bounds.width:bounds.height;
+  const layout=`${zero}/${size}/${matrix.a}`;
+  if(node.dataset.layout===layout)continue;
+  node.dataset.layout=layout;
+  const ticks=rulerTicks(-zero/matrix.a,(size-zero)/matrix.a,matrix.a);
+  let svg='';
+  for(const tick of ticks){
+   const p=Math.round(zero+tick.value*matrix.a)+.5,mark=tick.major?7:4;
+   const line=horizontal?`M${p} 22v-${mark}`:`M24 ${p}h-${mark}`;
+   svg+=`<path d="${line}" stroke="currentColor" opacity=".55"/>`;
+   if(tick.major)svg+=horizontal
+    ?`<text x="${p+3}" y="11">${fmt(tick.value*1000)}</text>`
+    :`<text x="11" y="${p+1}" text-anchor="middle" transform="rotate(-90 11 ${p+1})">${fmt(tick.value*1000)}</text>`;
+  }
+  node.innerHTML=`<svg fill="currentColor" width="${bounds.width}" height="${bounds.height}">${svg}</svg>`;
+ }
+}
+function zoom(factor,center){
+ const next=Math.max(.25,Math.min(Math.max(100,baseCamera.w*6),camera.w*factor));
+ if(camera.w===next)return;
+ const scale=next/camera.w,anchor=center||{x:camera.x+camera.w/2,y:camera.y+camera.h/2};
+ camera.x=anchor.x+(camera.x-anchor.x)*scale;camera.y=anchor.y+(camera.y-anchor.y)*scale;
+ camera.w=next;camera.h*=scale;renderPlanView();
+}
 function pixelUnit(){return 1/($('plan-svg').getScreenCTM()?.a||50);}
 function renderPlanView(){
  updateViewBox();
@@ -62,7 +94,19 @@ function renderPlanView(){
   if(shape==='round'||shape==='rect')structurePreview=makeStructure(structureType,'',[hover]);
   else if(shape==='line'&&points.length===2)structurePreview=makeStructure(structureType,'',points);
  }
- $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:tool==='angle'?[]:points,angleDraft:tool==='angle'?points:null,structurePreview}).content;
+ const measurement=tool==='measure'
+  ?(draft.length&&hover?{a:draft[0],b:hover}:measuredLine?.floorId===floorId?measuredLine:null):null;
+ renderMeasurement(measurement);
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement}).content;
+}
+function renderMeasurement(measurement){
+ const panel=$('measure-result');
+ panel.hidden=!measurement;
+ if(!measurement)return;
+ panel.setAttribute('aria-live',measurement===measuredLine?'polite':'off');
+ const {distance,dx,dy,angle}=segmentMeasurement(measurement.a,measurement.b);
+ const summary=`<strong>${fmt(distance*1000)} мм</strong><span>ΔX ${fmt(dx*1000)} мм</span><span>ΔY ${fmt(dy*1000)} мм</span><span>${fmt(angle,1)}°</span>`;
+ if(panel.innerHTML!==summary)panel.innerHTML=summary;
 }
 
 const floorsByElevation=()=>[...project.floors].sort((a,b)=>b.elevation-a.elevation);
@@ -72,7 +116,7 @@ function floorOptions(){
 }
 function chooseFloor(id){
  if(id===floorId||!project.floors.some(level=>level.id===id))return;
- floorId=id;setSelection([]);draft=[];hover=null;editorFeedback={};section=false;
+ floorId=id;setSelection([]);draft=[];hover=null;measuredLine=null;editorFeedback={};section=false;
  if(!preferences.allFloors)fitPlan();
  render();
 }
@@ -99,17 +143,46 @@ function render(){
  renderFloors();renderPlanView();renderInspector();updateToolHint();updateEditButtons();applyPreferenceButtons();updateCoordinates();refreshScene();
 }
 function propertyInput(key,label,value,{min=0,max=100000,step=10,unit='мм'}={}){return `<div class="property-row"><label for="property-${key}">${label}</label><div class="input-unit"><input id="property-${key}" data-property="${key}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><span>${unit}</span></div></div>`;}
-function sectionTitle(title){return `<h2>${title}<i data-icon="chevron"></i></h2>`;}
+function sectionTitle(title){return `<h2 class="section-heading">${title}</h2>`;}
 function structureProperties(e){
  const dimensions=[],shape=STRUCTURE_TYPES[e.type].shape;
+ const screw=e.type==='screwPile';
  if(shape==='line')dimensions.push(['length','Длина',wallLength(e),50,100000],['thickness','Ширина сечения',e.thickness,20,10000]);
- if(shape==='round')dimensions.push(['diameter','Диаметр',e.diameter,50,10000]);
+ if(shape==='round')dimensions.push(['diameter',screw?'Диаметр ствола':'Диаметр',e.diameter,50,screw?Math.floor(e.bladeDiameter*1000+1e-7)-10:10000]);
+ if(screw)dimensions.push(
+  ['bladeDiameter','Диаметр лопасти',e.bladeDiameter,Math.ceil(e.diameter*1000-1e-7)+10,10000],
+  ['bladePitch','Шаг витка',e.bladePitch,10,Math.floor((e.height*.7-e.bladeThickness)*1000+1e-7)],
+  ['bladeThickness','Толщина лопасти',e.bladeThickness,2,Math.min(60,Math.floor((e.height*.7-e.bladePitch)*1000+1e-7))]);
  if(shape==='rect')dimensions.push(['w','Ширина',e.w,50,30000],['d','Длина в плане',e.d,50,30000]);
- const heightLabel=e.kind==='framing'?'Высота сечения':shape==='round'?'Длина сваи':shape==='contour'?'Толщина плиты':'Высота';
- dimensions.push(['height',heightLabel,e.height,20,30000]);
+ const heightLabel=e.kind==='framing'?'Высота сечения':shape==='round'?'Длина сваи':shape==='contour'?'Толщина плиты':isPileCap(e)?'Толщина пластины':'Высота';
+ dimensions.push(['height',heightLabel,e.height,screw?Math.ceil((e.bladePitch+e.bladeThickness)*1000/.7):isPileCap(e)?5:20,30000]);
  if(e.gauge!==undefined)dimensions.push(['gauge','Толщина профиля',e.gauge,1,Math.floor(1000*Math.min(.9*e.thickness,.45*e.height))]);
- dimensions.push(['elevation','Верх от отметки этажа',e.elevation,-100000,100000]);
  return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('');
+}
+function positionProperties(e,host){
+ if(host)return propertyInput('position','От начала стены',Math.round(e.position*1000),{min:0,max:100000,step:1})
+  +'<p class="property-note">Проём перемещается вдоль оси стены.</p>';
+ const pos=elementPosition(e),rotatable=!isRoundStructure(e);
+ const reference=e.mode==='angle'?'Вершина угла':e.a?'Начало элемента':e.points?'Центр по вершинам контура'
+  :isRoundStructure(e)||isPileCap(e)?'Центр элемента':'Начальный угол элемента';
+ let fields=`<p class="property-note position-reference">${reference}</p>`;
+ fields+=propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000,step:1})
+  +propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000,step:1});
+ if(isStructure(e)){
+  if(isPileCap(e)&&e.pileId!==undefined){
+   fields+=`<div class="property-row"><span class="field-label">Верх от отметки этажа</span><strong>${fmt(e.elevation*1000)} мм</strong></div><p class="property-note">Оголовок перемещается вместе со сваей. Его низ совпадает с верхом сваи.</p>`;
+  }else fields+=propertyInput('elevation','Верх от отметки этажа',Math.round(e.elevation*1000),{min:-100000,max:isPileCap(e)?130000:100000,step:1});
+ }
+ if(rotatable){
+  const angle=(elementAngle(e)+360)%360;
+  fields+=propertyInput('angle','Угол поворота',Number(angle.toFixed(2))%360,{min:-360,max:360,step:.1,unit:'°'});
+  fields+=`<div class="rotation-controls" aria-label="Поворот на 90 градусов">
+   <button type="button" class="button" data-turn="-90" aria-label="Повернуть на минус 90 градусов">−90°</button>
+   <button type="button" class="button" data-turn="90" aria-label="Повернуть на плюс 90 градусов">+90°</button>
+  </div>`;
+ }
+ fields+=`<p class="property-note">Перетащите элемент или задайте координаты. Стрелки сдвигают на 50 мм, Shift + стрелки — на 500 мм.${rotatable?' Круглая ручка на плане поворачивает элемент.':''}</p>`;
+ return fields;
 }
 function renderGroupInspector(node){
  const items=[...selectedIds].map(id=>findElement(floor(),id)).filter(Boolean);
@@ -152,11 +225,14 @@ function renderInspector(){
   return;
  }
  if(!item){node.innerHTML=`<div class="empty-selection"><i data-icon="cursor"></i><h2>Выберите элемент</h2><p>Нажмите на элемент и перетащите его мышью. Любой объект можно также выбрать в списке слева.</p><div class="project-summary"><div><span>Этаж</span><strong>${escapeHTML(floor().name)}</strong></div><div><span>Элементов</span><strong>${listElements(floor()).length}</strong></div></div></div>`;hydrateIcons(node);return;}
- const {element:e,host}=item,kind=elementIcon(e),pos=elementPosition(e,host);
- let body=`<div class="element-title"><i data-icon="${kind}"></i><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.id.length>18?e.id.slice(0,14)+'…':e.id)}</small></div></div><section class="property-section">${sectionTitle('Общие')}`;
+ const {element:e,host}=item,kind=elementIcon(e),cap=isRoundStructure(e)?pileCapFor(floor(),e.id):null;
+ const tabs=[['geometry','Размеры'],['position','Положение']];
+ let body=`<div class="element-title"><i data-icon="${kind}"></i><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.id.length>18?e.id.slice(0,14)+'…':e.id)}</small></div></div>
+ <div class="inspector-tabs" role="group" aria-label="Разделы свойств">${tabs.map(([key,label])=>`<button type="button" data-inspector-tab="${key}" aria-pressed="${inspectorTab===key}">${label}</button>`).join('')}</div>
+ <section class="property-section" ${inspectorTab==='geometry'?'':'hidden'}>`;
  if(e.kind==='wall')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+propertyInput('height','Высота',Math.round(e.height*1000),{min:1000,max:15000})+propertyInput('length','Длина',Math.round(wallLength(e)*1000),{min:200,max:100000});
  else if(isStructure(e))body+=structureProperties(e);
- else if(host)body+=propertyInput('width','Ширина проёма',Math.round(e.width*1000),{min:300,max:10000,step:1})+propertyInput('height','Высота проёма',Math.round(e.height*1000),{min:300,max:15000,step:1})+propertyInput('sill','Отметка низа',Math.round(e.sill*1000),{min:0,max:15000,step:1})+propertyInput('position','Положение',Math.round(e.position*1000),{min:0,max:100000,step:1});
+ else if(host)body+=propertyInput('width','Ширина проёма',Math.round(e.width*1000),{min:300,max:10000,step:1})+propertyInput('height','Высота проёма',Math.round(e.height*1000),{min:300,max:15000,step:1})+propertyInput('sill','Отметка низа',Math.round(e.sill*1000),{min:0,max:15000,step:1});
  else if(e.kind==='slab')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(polygonArea(e.points),2)} м²</span></div>`;
  else if(e.kind==='furniture')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:50,max:30000})+propertyInput('d','Глубина',Math.round(e.d*1000),{min:50,max:30000})+propertyInput('height','Высота',Math.round(e.height*1000),{min:5,max:15000});
  else if(e.kind==='room')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:100,max:100000})+propertyInput('h','Глубина',Math.round(e.h*1000),{min:100,max:100000})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(e.w*e.h,2)} м²</span></div>`;
@@ -168,24 +244,48 @@ function renderInspector(){
   const empty=e.kind==='doorway';
   body+=`<button type="button" class="button ${empty?'primary':''} opening-action" id="door-fill-action"><i data-icon="${empty?'door':'doorway'}"></i>${empty?'Вставить дверь':'Вынуть дверь'}</button>`;
  }
+ if(isRoundStructure(e))body+=`<button type="button" class="button opening-action" id="pile-cap-action"><i data-icon="pile-cap"></i>${cap?'Выбрать оголовок':'Добавить оголовок'}</button>`;
+ if(isPileCap(e)&&e.pileId!==undefined)body+=`<button type="button" class="button opening-action" id="detach-pile-cap">Отсоединить от сваи</button>`;
  body+='</section>';
- if(!host)body+=`<section class="property-section">${sectionTitle('Положение')}${propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000})}${propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000})}<p class="property-note">Перетащите элемент мышью или задайте координаты. Стрелки — шаг 50 мм, Shift — 500 мм.</p></section>`;
+ body+=`<section class="property-section" ${inspectorTab==='position'?'':'hidden'}>${positionProperties(e,host)}</section>`;
  if(e.kind==='wall')body+=`<section class="property-section">${sectionTitle('Конструкция')}<div class="property-row"><label for="property-loadBearing">Несущая стена</label><input class="toggle" id="property-loadBearing" data-property="loadBearing" type="checkbox" ${e.loadBearing?'checked':''}></div><div class="property-row"><span class="field-label">Проёмы</span><span class="value-muted">${e.openings.length}</span></div><div class="property-row"><span class="field-label">Объём брутто</span><span class="value-muted">${fmt(wallLength(e)*e.thickness*e.height,2)} м³</span></div></section>`;
- if(host)body+=`<section class="property-section">${sectionTitle('Размещение')}<div class="property-row"><span class="field-label">Основа</span><span class="value-muted">${escapeHTML(host.id.slice(0,14))}</span></div><p class="property-note">Положение отсчитывается от начала оси стены. Проём сохраняет связь со стеной.</p></section>`;
- if(!host&&!isRoundStructure(e))body+=`<section class="property-section">${sectionTitle('Поворот')}<div class="property-row"><span class="field-label">Угол</span><span class="value-muted">${fmt(elementAngle(e),1)}°</span></div></section>`;
- body+=`<section class="property-section">${sectionTitle('Привязки')}<div class="property-row"><label for="property-showAxes">Оси симметрии</label><input class="toggle" id="property-showAxes" data-property="showAxes" type="checkbox" ${e.showAxes!==false?'checked':''}></div><p class="property-note">Ручки на плане меняют размер. Круглая ручка поворачивает элемент. Alt временно отключает привязки.</p></section>`;
+ body+=`<section class="property-section">${sectionTitle('Привязки')}<div class="property-row"><label for="property-showAxes">Оси симметрии</label><input class="toggle" id="property-showAxes" data-property="showAxes" type="checkbox" ${e.showAxes!==false?'checked':''}></div><p class="property-note">Квадратные ручки меняют размеры на плане. Alt временно отключает привязки.</p></section>`;
  body+=`<section class="property-section">${sectionTitle('Идентификация')}<label class="element-name-label" for="element-name">Название</label><input id="element-name" class="element-name-input" data-property="name" type="text" maxlength="100" value="${escapeHTML(e.name)}"><p class="property-note">${e.kind==='wall'?'Стена перемещается вместе со своими дверями и окнами.':'Параметры и положение сохраняются в проекте.'}</p></section>`;
- node.innerHTML=body;hydrateIcons(node);node.querySelectorAll('[data-property]').forEach(input=>{input.addEventListener('change',()=>updateProperty(input));input.addEventListener('keydown',event=>{if(event.key==='Enter')input.blur();});});
+ node.innerHTML=body;hydrateIcons(node);
+ node.querySelectorAll('[data-inspector-tab]').forEach(button=>button.onclick=()=>{
+  inspectorTab=button.dataset.inspectorTab;renderInspector();node.scrollTop=0;
+  node.querySelector('[aria-pressed="true"]')?.focus({preventScroll:true});
+ });
+ node.querySelectorAll('[data-property]').forEach(input=>{
+  input.addEventListener('change',()=>updateProperty(input));
+  if(input.tagName==='INPUT'&&input.type!=='checkbox')input.addEventListener('keydown',event=>{
+   if(event.key==='Enter'){event.preventDefault();updateProperty(input);}
+  });
+ });
+ node.querySelectorAll('[data-turn]').forEach(button=>button.onclick=()=>{
+  mutate(()=>rotateElement(floor(),e.id,Number(button.dataset.turn)));
+ });
  if($('door-fill-action'))$('door-fill-action').onclick=()=>changeDoor(e.id,e.kind==='doorway');
+ if($('pile-cap-action'))$('pile-cap-action').onclick=()=>selectOrAddCap(e);
+ if($('detach-pile-cap'))$('detach-pile-cap').onclick=()=>mutate(()=>delete e.pileId,'Оголовок отсоединён');
 }
-function updateProperty(input){const item=selected();if(!item)return;const key=input.dataset.property,value=input.type==='checkbox'?input.checked:input.tagName==='SELECT'||input.type==='text'?input.value.trim():Number(input.value)/1000;
+function updateProperty(input){
+ const item=selected();
+ if(!item||!input.isConnected)return;
+ const key=input.dataset.property;
+ if(input.tagName==='INPUT'&&input.type!=='checkbox'&&input.value===input.defaultValue)return;
  if(key==='floorId'){
   transferSelection(input.value);
   return;
  }
+ const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(key==='angle'?1:1000):input.value.trim();
  mutate(()=>{const {element:e,host}=item;
-  if(typeof value==='number'&&(!Number.isFinite(value)||input.value===''))throw new Error('Введите корректное значение.');
-  if(key==='x'||key==='y'){const pos=elementPosition(e,host);translateElement(floor(),item.element.id,key==='x'?value-pos.x:0,key==='y'?value-pos.y:0);}
+  if(typeof value==='number'){
+   if(!Number.isFinite(value))throw new Error('Введите корректное число.');
+   if(input.validity.rangeUnderflow||input.validity.rangeOverflow)throw new Error(`Допустимый диапазон — от ${input.min} до ${input.max} ${key==='angle'?'°':'мм'}.`);
+  }
+  if(key==='angle')setElementAngle(floor(),e.id,value);
+  else if(key==='x'||key==='y'){const pos=elementPosition(e,host);translateElement(floor(),item.element.id,key==='x'?value-pos.x:0,key==='y'?value-pos.y:0);}
   else if(key==='length'){const old=wallLength(e),dx=(e.b.x-e.a.x)/old,dy=(e.b.y-e.a.y)/old;e.b={x:e.a.x+dx*value,y:e.a.y+dy*value};}else e[key]=value;
   if(host&&!canPlaceOpening(host,e,e.id))throw new Error('Проём выходит за границы стены или пересекает другой проём.');
   if(e.kind==='wall'&&e.openings.some(o=>!canPlaceOpening(e,o,o.id)))throw new Error('Размер стены не позволяет сохранить существующие проёмы.');
@@ -199,15 +299,17 @@ function updateToolHint(){
  if(tool==='select'&&!listElements(floor()).length)hint='Пустой этаж · Выберите «Стена», «Плита» или добавьте мебель';
  if(tool==='slab')hint=`${floorLabel(floor())} · ${hint}`;
  if(tool==='angle')hint=['Укажите вершину угла','Укажите точку на первом луче','Укажите точку на втором луче'][draft.length];
+ if(tool==='measure')hint=draft.length?'Линейка · Укажите вторую точку · Shift выравнивает замер'
+  :measuredLine?.floorId===floorId?'Линейка · Щёлкните для нового замера · Esc закрывает замер':'Линейка · Укажите первую точку · Esc закрывает замер';
  if(tool==='structure'){
   const spec=STRUCTURE_TYPES[structureType],hintByShape={round:'Укажите центр сваи',rect:'Укажите центр опоры',line:draft.length?'Укажите конец элемента':'Укажите начало элемента',contour:hints.slab};
-  hint=`${spec.name} · ${hintByShape[spec.shape]}`;
+  hint=`${spec.name} · ${structureType==='pileCap'?'Щёлкните по свае или укажите свободную точку':hintByShape[spec.shape]}`;
  }
  $('canvas-hint').textContent=hint;
  $('tool-status').textContent=tool==='select'?'Выбор элементов':hint;
 }
 function setTool(next){
- tool=next;draft=[];hover=null;editorFeedback={};
+ tool=next;draft=[];hover=null;measuredLine=null;editorFeedback={};
  $$('[data-tool], [data-structure-category]').forEach(button=>{
   const active=button.dataset.tool===next||next==='structure'&&button.dataset.structureCategory===STRUCTURE_TYPES[structureType].kind;
   button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
@@ -252,8 +354,24 @@ function addDoorway(wall,distance){
  $('doorway-width').select();
 }
 function choosePoint(p,event){
+ if(tool==='measure'){
+  const a=draft[0];
+  if(a&&length(sub(p,a))>1e-8){measuredLine={a,b:p,floorId};draft=[];}
+  else{measuredLine=null;draft=[p];}
+  hover=null;editorFeedback={};updateToolHint();renderPlanView();return;
+ }
  if(tool==='structure'){
   const spec=STRUCTURE_TYPES[structureType];
+  if(structureType==='pileCap'){
+   const pointed=findElement(floor(),event.target.closest('[data-element]')?.dataset.element)?.element;
+   const pile=isRoundStructure(pointed)?pointed:closestPile(p);
+   if(pile){
+    const existing=pileCapFor(floor(),pile.id);
+    if(existing){select(existing.id);toast('На этой свае уже есть оголовок.');}
+    else addStructure([p],'pileCap',pile);
+   }else addStructure([p]);
+   return;
+  }
   if((spec.shape==='line'||spec.shape==='contour')&&event.detail>1)return;
   if(spec.shape==='line'||spec.shape==='contour'){
    draft.push(p);hover=null;
@@ -300,11 +418,30 @@ function choosePoint(p,event){
   mutate(()=>{nearest.wall.openings.push(opening);setSelection([opening.id]);},'Окно добавлено');
  }
 }
-function addStructure(points){
- const spec=STRUCTURE_TYPES[structureType];
- const e=makeStructure(structureType,uid(spec.kind==='foundation'?'ФН':'КР'),points);
+function closestPile(point){
+ let best=null,bestDistance=Infinity;
+ for(const e of floor().structures){
+  if(!isRoundStructure(e))continue;
+  const distance=length(sub(e,point));
+  if(distance<bestDistance&&distance<=Math.max(e.diameter/2,pixelUnit()*10)){
+   best=e;bestDistance=distance;
+  }
+ }
+ return best;
+}
+function selectOrAddCap(pile){
+ const existing=pileCapFor(floor(),pile.id);
+ inspectorTab='geometry';
+ if(tool!=='select')setTool('select');
+ if(existing)select(existing.id);
+ else addStructure([{x:pile.x,y:pile.y}],'pileCap',pile);
+}
+function addStructure(points,type=structureType,pile){
+ const spec=STRUCTURE_TYPES[type],origin=pile?[{x:pile.x,y:pile.y}]:points;
+ const e=makeStructure(type,uid(spec.kind==='foundation'?'ФН':'КР'),origin);
+ if(pile)e.pileId=pile.id;
  hover=null;editorFeedback={};
- mutate(()=>{floor().structures.push(e);setSelection([e.id]);},e.name+' · добавлено');
+ mutate(()=>{floor().structures.push(e);setSelection([e.id]);},pile?'Оголовок закреплён на свае':e.name+' · добавлено');
 }
 function drawingContour(){return tool==='slab'||tool==='structure'&&STRUCTURE_TYPES[structureType].shape==='contour';}
 function finishContour(){
@@ -320,39 +457,40 @@ function removeSelected(){
  const item=selected();
  if(item?.host&&item.element.kind==='door'){changeDoor(item.element.id,false);return;}
  mutate(()=>{
-  const current=floor(),remaining=[];
+  const current=floor(),remaining=[],deleted=linkedPileSelection(current,selectedIds,false);
   for(const wall of current.walls){
-   if(selectedIds.has(wall.id))continue;
+   if(deleted.has(wall.id))continue;
    wall.openings=wall.openings.filter(o=>{
-    if(!selectedIds.has(o.id))return true;
+    if(!deleted.has(o.id))return true;
     if(!setOpeningDoor(o,false))return false;
     remaining.push(o.id);return true;
    });
   }
-  for(const key of FLOOR_COLLECTIONS)current[key]=current[key].filter(e=>!selectedIds.has(e.id));
+  for(const key of FLOOR_COLLECTIONS)current[key]=current[key].filter(e=>!deleted.has(e.id));
   setSelection(remaining);
  },'Удаление выполнено · Ctrl+Z — отменить');
 }
 function copySelected(){
  if(!selectedIds.size)return;
  mutate(()=>{
-  const current=floor(),copies=[];
-  for(const id of selectedIds){
-   const item=findElement(current,id);
-   if(!item||selectedIds.has(item.host?.id))continue;
-   const copy=clone(item.element);copy.id=uid(copy.kind);
+  const current=floor(),ids=linkedPileSelection(current,selectedIds);
+  const items=[...ids].map(id=>findElement(current,id)).filter(item=>item&&!ids.has(item.host?.id));
+  const copies=new Map(items.map(({element})=>[element.id,uid(element.kind)]));
+  for(const item of items){
+   const copy=clone(item.element);copy.id=copies.get(item.element.id);
    if(item.host){
     copy.position+=copy.width+.2;
     if(!canPlaceOpening(item.host,copy))throw new Error('На стене недостаточно места для копии.');
     item.host.openings.push(copy);
    }else{
     if(copy.kind==='wall')copy.openings.forEach(o=>o.id=uid(o.kind));
+    const attached=isPileCap(copy)&&copy.pileId!==undefined;
+    if(attached)copy.pileId=copies.get(copy.pileId);
     current[item.collection].push(copy);
-    translateElement(current,copy.id,.5,.5);
+    if(!attached)translateElement(current,copy.id,.5,.5);
    }
-   copies.push(copy.id);
   }
-  setSelection(copies);
+  setSelection(copies.values());
  },'Копии созданы');
 }
 function elementIcon(e){return isStructure(e)?STRUCTURE_TYPES[e.type].icon:e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
@@ -361,7 +499,7 @@ function beginElementDrag(id,point,handle=null){
  if(!findElement(floor(),id))return;
  if(!selectedIds.has(id))select(id);
  else editorFeedback={};
- const ids=[...selectedIds];
+ const ids=[...linkedPileSelection(floor(),selectedIds)];
  const options=sceneOptions();
  movement={before:snapshot(),id,ids,handle,start:{x:point.x,y:point.y},valid:null,
   targets:snapTargets(floor(),ids,preferences.axes,options),anchors:selectionAnchors(floor(),ids)};
@@ -395,7 +533,10 @@ function previewElementDrag(point,shift=false,disableSnap=false,unit=pixelUnit()
   }else if(drag.handle){
    let target={x:point.x,y:point.y};if(preferences.snap&&!disableSnap){feedback=snapPoint(target,drag.targets,tol,{alignment:preferences.guides,axes:preferences.axes});target=feedback.label?feedback.point:{x:Math.round(target.x*20)/20,y:Math.round(target.y*20)/20};}
    resizeElement(candidateFloor,drag.id,drag.handle,target);description='Изменение размера';
-   const actual=findElement(candidateFloor,drag.id),handle=transformHandles(actual.element,actual.host,pixelUnit()).find(h=>h.key===drag.handle);if(handle)feedback=accurateFeedback(feedback,[handle]);
+   const actual=findElement(candidateFloor,drag.id),edited=actual.element,handle=transformHandles(edited,actual.host,pixelUnit()).find(h=>h.key===drag.handle);
+   if(handle&&(drag.handle==='diameter'||drag.handle==='bladeDiameter'))description=`${handle.label} · ${fmt(edited[drag.handle]*1000)} мм`;
+   else if(edited.a&&edited.mode!=='angle')description=`Длина · ${fmt(wallLength(edited)*1000)} мм`;
+   if(handle)feedback=accurateFeedback(feedback,[handle]);
   }else{
    if(shift){if(Math.abs(dx)>Math.abs(dy))dy=0;else dx=0;}
    if(preferences.snap&&!disableSnap){
@@ -455,7 +596,8 @@ function showEditorMenu(event,id,point){
  if(id){
   if(kind==='wall'&&point)add('Создать дверной проём','doorway',()=>addDoorway(item.element,projectPoint(point,item.element).distance));
   if(kind==='doorway')add('Вставить дверь','door',()=>changeDoor(item.element.id,true));
-  if(item&&$('inspector-content').offsetWidth)add('Свойства','edit',()=>$('inspector-content').querySelector('[data-property]')?.focus());
+  if(item&&isRoundStructure(item.element))add(pileCapFor(floor(),item.element.id)?'Выбрать оголовок':'Добавить оголовок','pile-cap',()=>selectOrAddCap(item.element));
+  if(item&&$('inspector-content').offsetWidth)add('Свойства','edit',()=>$('inspector-content').querySelector('.property-section:not([hidden]) [data-property]')?.focus());
   add('Дублировать','copy',copySelected);
   if(kind==='door')add('Вынуть дверь','doorway',()=>changeDoor(item.element.id,false));
   else add(kind==='doorway'?'Удалить проём':'Удалить','trash',removeSelected);
@@ -500,7 +642,7 @@ function chooseStructure(category){
   </button>`).join('')}
  </div>`);
  $$('[data-structure]').forEach(button=>button.onclick=()=>{
-  structureType=button.dataset.structure;$('modal').close();setTool('structure');
+  structureType=button.dataset.structure;inspectorTab='geometry';$('modal').close();setTool('structure');
  });
 }
 function editFloor(level){
@@ -599,9 +741,9 @@ $('sheet-view').onclick=()=>actionModal('План этажа','Откроетс�
 $('modal-close').onclick=()=>$('modal').close();$('modal').addEventListener('click',event=>{if(event.target===$('modal')){const r=$('modal').getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)$('modal').close();}});
 function showAbout(){modal('Рабочее пространство','<p>Интерактивный прототип архитектурного редактора: план, 3D и свойства элементов в одном окне.</p><p>Проект сохраняется <strong>только в этом браузере</strong>. Чтобы перенести его на другое устройство, используйте «Экспорт → Проект JSON» и «Открыть».</p><p>Режим «Все этажи» показывает здание целиком. Новые элементы создаются на рабочем этаже. Все элементы можно выделять и перемещать. Проекты доступны через меню «Мои проекты». Полноценные BIM-расчёты, IFC и командная работа запланированы на следующих этапах.</p>');}
 $('about-button').onclick=showAbout;
-function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить или убрать из выделения','Ctrl + щелчок'],['Добавить рамкой','Ctrl + перетаскивание'],['Изменение размера','Квадратные ручки'],['Поворот','Круглая ручка'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверной проём','G → стена → размеры'],['Вставить дверь','D → пустой проём'],['Окно','O'],['Контекстное меню','Правая кнопка / Shift+F10'],['Перекрытие','P → точки → Enter'],['Фундаменты / каркас','Выберите тип слева'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
+function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить или убрать из выделения','Ctrl + щелчок'],['Добавить рамкой','Ctrl + перетаскивание'],['Изменение размера','Квадратные ручки'],['Поворот','Ручка или угол в свойствах'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверной проём','G → стена → размеры'],['Вставить дверь','D → пустой проём'],['Окно','O'],['Контекстное меню','Правая кнопка / Shift+F10'],['Перекрытие','P → точки → Enter'],['Фундаменты / каркас','Выберите тип слева'],['Линейка','L → две точки'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
 $('help-button').onclick=showHelp;
-$('settings-button').onclick=()=>{modal('Отображение',`<p>Настройки сохраняются на этом устройстве.</p>${[['dark','Тёмная тема'],['textures','Текстуры материалов'],['grid','Сетка'],['labels','Названия помещений'],['dimensions','Размеры'],['snap','Привязка к краям, серединам и центрам'],['axes','Оси деталей и привязки к осям'],['guides','Направляющие и выравнивание']].map(([key,label])=>`<label class="settings-option">${label}<input class="toggle" type="checkbox" data-pref="${key}" ${preferences[key]?'checked':''}></label>`).join('')}`);$$('[data-pref]').forEach(input=>input.onchange=()=>{preferences[input.dataset.pref]=input.checked;savePreferences();render();});};
+$('settings-button').onclick=()=>{modal('Отображение',`<p>Настройки сохраняются на этом устройстве.</p>${[['dark','Тёмная тема'],['textures','Текстуры материалов'],['grid','Сетка'],['rulers','Координатные линейки'],['labels','Названия помещений'],['dimensions','Размеры'],['snap','Привязка к краям, серединам и центрам'],['axes','Оси деталей и привязки к осям'],['guides','Направляющие и выравнивание']].map(([key,label])=>`<label class="settings-option">${label}<input class="toggle" type="checkbox" data-pref="${key}" ${preferences[key]?'checked':''}></label>`).join('')}`);$$('[data-pref]').forEach(input=>input.onchange=()=>{preferences[input.dataset.pref]=input.checked;savePreferences();render();});};
 const surface=$('drawing-surface');
 new ResizeObserver(()=>renderPlanView()).observe(surface);
 surface.addEventListener('contextmenu',event=>{
@@ -683,7 +825,7 @@ document.addEventListener('keydown',event=>{
   showEditorMenu({target,clientX:left+width/2,clientY:top+height/2},target.dataset.elementId||singleSelection(),null);return;
  }
  const ctrl=event.ctrlKey||event.metaKey;
- const pressed=event.key.toLowerCase(),key=ctrl&&/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&drawingContour()){event.preventDefault();finishContour();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',g:'doorway',d:'door',o:'window',p:'slab',m:'dimension',a:'angle',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
+ const pressed=event.key.toLowerCase(),key=/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&drawingContour()){event.preventDefault();finishContour();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',g:'doorway',d:'door',o:'window',p:'slab',l:'measure',m:'dimension',a:'angle',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
 document.addEventListener('keyup',event=>{if(event.code==='Space')spaceHeld=false;});window.addEventListener('blur',()=>{spaceHeld=false;clearMarquee();cancelElementDrag();endPan();});
 window.addEventListener('storage',event=>{if([STORAGE_KEY,CATALOG_KEY].includes(event.key)&&event.newValue)toast('Проект изменён в другой вкладке. Скачайте текущую копию перед перезагрузкой.');});
 if(loadWarning)toast(loadWarning);

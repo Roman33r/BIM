@@ -1,6 +1,6 @@
 import {findElement} from './elements.js';
 import {angleGeometry} from './annotations.js';
-import {isLinearStructure,isRoundStructure} from './structures.js';
+import {isLinearStructure,isRoundStructure,isPileCap,pileFootprintDiameter} from './structures.js';
 export const add=(a,b)=>({x:a.x+b.x,y:a.y+b.y});
 export const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
 export const mul=(a,k)=>({x:a.x*k,y:a.y*k});
@@ -17,7 +17,8 @@ export function elementFrame(e,host){
  if(host){w=e.width;h=host.thickness;const center=add(host.a,mul(u,e.position));origin=sub(sub(center,mul(u,w/2)),mul(v,h/2));}
  else if(e.mode==='angle'){origin=e.vertex;w=0;h=0;}
  else if(e.a){w=length(sub(e.b,e.a));h=e.kind==='wall'||isLinearStructure(e)?e.thickness:0;origin=sub(e.a,mul(v,h/2));}
- else if(isRoundStructure(e)){w=h=e.diameter;origin={x:e.x-w/2,y:e.y-h/2};}
+ else if(isRoundStructure(e)){w=h=pileFootprintDiameter(e);origin={x:e.x-w/2,y:e.y-h/2};}
+ else if(isPileCap(e)){w=e.w;h=e.d;origin=sub(sub(e,mul(u,w/2)),mul(v,h/2));}
  else if(e.points){const xs=e.points.map(p=>dot(p,u)),ys=e.points.map(p=>dot(p,v)),left=Math.min(...xs),top=Math.min(...ys);origin=add(mul(u,left),mul(v,top));w=Math.max(...xs)-left;h=Math.max(...ys)-top;}
  else{origin={x:e.x,y:e.y};w=e.w;h=e.d??e.h;}
  const frame={origin,w,h,u,v};frame.center=framePoint(frame,w/2,h/2);return frame;
@@ -25,7 +26,7 @@ export function elementFrame(e,host){
 export function elementFootprint(e,host){
  if(e.points)return e.points;
  if(isRoundStructure(e)){
-  const radius=e.diameter/2;
+  const radius=pileFootprintDiameter(e)/2;
   return Array.from({length:24},(_,i)=>({x:e.x+radius*Math.cos(i*Math.PI/12),y:e.y+radius*Math.sin(i*Math.PI/12)}));
  }
  const f=elementFrame(e,host);
@@ -39,8 +40,14 @@ export function elementAxes(e,host){
 export function elementAnchors(e,host){
  if(e.mode==='angle')return [{...e.vertex,role:'Вершина угла'},{...e.a,role:'Конец'},{...e.b,role:'Конец'},{...angleGeometry(e).middle,role:'Середина дуги'}];
  if(isRoundStructure(e)){
-  const center={x:e.x,y:e.y},r=e.diameter/2;
-  return [{...center,role:'Центр'},...[{x:r,y:0},{x:0,y:r},{x:-r,y:0},{x:0,y:-r}].map(p=>({...add(center,p),role:'Край сваи'}))];
+  const center={x:e.x,y:e.y};
+  const edge=(diameter,role)=>{
+   const r=diameter/2;
+   return [{x:r,y:0},{x:0,y:r},{x:-r,y:0},{x:0,y:-r}].map(p=>({...add(center,p),role}));
+  };
+  const points=[{...center,role:'Центр'},...edge(e.diameter,'Край ствола')];
+  if(e.type==='screwPile')points.push(...edge(e.bladeDiameter,'Край лопасти'));
+  return points;
  }
  const f=elementFrame(e,host),points=[];
  for(const [x,y,role] of [[0,0,'Угол'],[.5,0,'Середина'],[1,0,'Угол'],[1,.5,'Середина'],[1,1,'Угол'],[.5,1,'Середина'],[0,1,'Угол'],[0,.5,'Середина'],[.5,.5,'Центр']])points.push({...framePoint(f,f.w*x,f.h*y),role});
@@ -56,7 +63,10 @@ export function transformHandles(e,host,unit=.02){
   put('a',e.a,wall?'Начало стены':'Начало элемента');put('b',e.b,wall?'Конец стены':'Конец элемента');
   put('thickness',framePoint(f,f.w/2,f.h),wall?'Толщина стены':'Ширина сечения','ns-resize');
  }
- else if(isRoundStructure(e))put('diameter',{x:e.x+e.diameter/2,y:e.y},'Диаметр сваи','ew-resize');
+ else if(isRoundStructure(e)){
+  put('diameter',{x:e.x+e.diameter/2,y:e.y},e.type==='screwPile'?'Диаметр ствола':'Диаметр сваи','ew-resize');
+  if(e.type==='screwPile')put('bladeDiameter',{x:e.x-e.bladeDiameter/2,y:e.y},'Диаметр лопасти','ew-resize');
+ }
  else if(host){put('left',framePoint(f,0,f.h/2),'Левый край проёма','ew-resize');put('right',framePoint(f,f.w,f.h/2),'Правый край проёма','ew-resize');}
  else if(e.mode==='angle'){put('a',e.a,'Первый луч');put('vertex',e.vertex,'Вершина угла');put('b',e.b,'Второй луч');put('radius',angleGeometry(e).middle,'Радиус дуги','move');}
  else if(e.kind==='dimension'){put('a',e.a,'Первая точка размера');put('b',e.b,'Вторая точка размера');put('offset',add(f.center,mul(f.v,e.offset)),'Положение размерной линии','move');}
@@ -73,6 +83,11 @@ export function rotateElement(floor,id,degrees){
  else if(!isRoundStructure(e)){const origin=rotatePoint({x:e.x,y:e.y},center,degrees);e.x=origin.x;e.y=origin.y;e.rotation=normalAngle((e.rotation||0)+degrees);}
  return found;
 }
+export function setElementAngle(floor,id,angle){
+ const found=findElement(floor,id);
+ if(!found||found.host||isRoundStructure(found.element)||!Number.isFinite(angle))throw new Error('Угол поворота недоступен.');
+ return rotateElement(floor,id,normalAngle(angle-elementAngle(found.element)));
+}
 export function resizeElement(floor,id,handle,point){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found,f=elementFrame(e,host);
  if(e.kind==='wall'||isLinearStructure(e)){
@@ -81,12 +96,21 @@ export function resizeElement(floor,id,handle,point){
    e.thickness=Math.max(min,Math.min(wall?1.5:10,2*Math.abs(dot(sub(point,f.center),f.v))));
   }else if(['a','b'].includes(handle))e[handle]={...point};
  }
- else if(isRoundStructure(e)){if(handle==='diameter')e.diameter=Math.max(.05,Math.min(10,2*length(sub(point,f.center))));}
+ else if(isRoundStructure(e)){
+  const diameter=2*length(sub(point,f.center));
+  if(handle==='diameter')e.diameter=Math.max(.05,Math.min(e.type==='screwPile'?e.bladeDiameter-.01:10,diameter));
+  if(handle==='bladeDiameter'&&e.type==='screwPile')e.bladeDiameter=Math.max(e.diameter+.01,Math.min(10,diameter));
+ }
+ else if(isPileCap(e)&&e.pileId!==undefined){
+  const p=sub(point,f.center);
+  if(handle.includes('w')||handle.includes('e'))e.w=Math.max(.05,Math.min(30,2*Math.abs(dot(p,f.u))));
+  if(handle.includes('n')||handle.includes('s'))e.d=Math.max(.05,Math.min(30,2*Math.abs(dot(p,f.v))));
+ }
  else if(host){const along=dot(sub(point,host.a),f.u),left=e.position-e.width/2,right=e.position+e.width/2;let min=.08+1e-9,max=length(sub(host.b,host.a))-.08-1e-9;for(const o of host.openings){if(o.id===id)continue;if(o.position<e.position)min=Math.max(min,o.position+o.width/2+.08+1e-9);else max=Math.min(max,o.position-o.width/2-.08-1e-9);}const start=handle==='left'?Math.max(min,Math.min(right-.300000001,along)):left,end=handle==='right'?Math.min(max,Math.max(left+.300000001,along)):right;e.width=end-start;e.position=(start+end)/2;}
  else if(e.mode==='angle'){if(handle==='radius')e.radius=Math.max(.05,Math.min(100,length(sub(point,e.vertex))));else if(['a','vertex','b'].includes(handle))e[handle]={...point};}
  else if(e.kind==='dimension'){if(handle==='offset')e.offset=dot(sub(point,e.a),f.v);else if(['a','b'].includes(handle))e[handle]={...point};}
  else if(e.points){const index=Number(handle.split('-')[1]);if(handle.startsWith('vertex-'))e.points[index]={...point};else if(handle.startsWith('edge-')){const next=(index+1)%e.points.length,edge=sub(e.points[next],e.points[index]),len=length(edge),normal={x:-edge.y/len,y:edge.x/len},delta=mul(normal,dot(sub(point,midpoint(e.points[index],e.points[next])),normal));e.points[index]=add(e.points[index],delta);e.points[next]=add(e.points[next],delta);}}
- else{const p=sub(point,f.origin),px=dot(p,f.u),py=dot(p,f.v),min=e.kind==='room'?.100000001:.050000001,max=e.kind==='room'?100:30;let left=0,top=0,right=f.w,bottom=f.h;if(handle.includes('w'))left=Math.max(right-max,Math.min(right-min,px));if(handle.includes('e'))right=Math.min(left+max,Math.max(left+min,px));if(handle.includes('n'))top=Math.max(bottom-max,Math.min(bottom-min,py));if(handle.includes('s'))bottom=Math.min(top+max,Math.max(top+min,py));const origin=framePoint(f,left,top);e.x=origin.x;e.y=origin.y;e.w=right-left;if(e.kind==='room')e.h=bottom-top;else e.d=bottom-top;}
+ else{const p=sub(point,f.origin),px=dot(p,f.u),py=dot(p,f.v),min=e.kind==='room'?.100000001:.050000001,max=e.kind==='room'?100:30;let left=0,top=0,right=f.w,bottom=f.h;if(handle.includes('w'))left=Math.max(right-max,Math.min(right-min,px));if(handle.includes('e'))right=Math.min(left+max,Math.max(left+min,px));if(handle.includes('n'))top=Math.max(bottom-max,Math.min(bottom-min,py));if(handle.includes('s'))bottom=Math.min(top+max,Math.max(top+min,py));const origin=isPileCap(e)?framePoint(f,(left+right)/2,(top+bottom)/2):framePoint(f,left,top);e.x=origin.x;e.y=origin.y;e.w=right-left;if(e.kind==='room')e.h=bottom-top;else e.d=bottom-top;}
  return found;
 }
 export function isSimplePolygon(points){

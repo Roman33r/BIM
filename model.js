@@ -1,7 +1,7 @@
 import {migrateElements,FURNITURE_TYPES,listElements} from './elements.js';
 import {isSimplePolygon} from './transforms.js';
 import {angleValue} from './annotations.js';
-import {STRUCTURE_TYPES} from './structures.js';
+import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structures.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -80,7 +80,8 @@ export function validateProject(value){
    if(!e||typeof e!=='object'||!Object.hasOwn(STRUCTURE_TYPES,e.type))fail();
    const spec=STRUCTURE_TYPES[e.type];
    id(e.id);
-   if(e.kind!==spec.kind||!str(e.name)||!str(e.material)||!num(e.elevation,-100,100)||!num(e.height,.02,30))fail();
+   if(e.kind!==spec.kind||!str(e.name)||!str(e.material)||!num(e.elevation,-100,isPileCap(e)?130:100)
+    ||!num(e.height,isPileCap(e) ? .005 : .02,30))fail();
    if(spec.shape==='line'){
     if(!point(e.a)||!point(e.b)||!num(wallLength(e),.05,100)||!num(e.thickness,.02,10))fail();
     if(spec.sizes.gauge!==undefined&&!num(e.gauge,.001,Math.min(e.thickness*.9,e.height*.45)))fail();
@@ -88,9 +89,20 @@ export function validateProject(value){
     if(!Array.isArray(e.points)||e.points.length<3||e.points.length>200||!e.points.every(point)
      ||polygonArea(e.points)<.1||!isSimplePolygon(e.points)||!num(e.rotation??0,-360,360))fail();
    }else if(!point(e))fail();
-   else if(spec.shape==='round'){if(!num(e.diameter,.05,10))fail();}
+   else if(spec.shape==='round'){
+    if(!num(e.diameter,.05,e.type==='screwPile'?9.99:10))fail();
+    if(e.type==='screwPile'&&(!num(e.bladeDiameter,e.diameter+.01-1e-9,10)||!num(e.bladeThickness,.002,.06)
+     ||!num(e.bladePitch,.01,e.height*.7-e.bladeThickness)))fail();
+   }
    else if(!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.rotation,-360,360))fail();
   }
+  const piles=new Set(f.structures.filter(isRoundStructure).map(e=>e.id)),capped=new Set();
+  for(const e of f.structures){
+   if(!isPileCap(e)||e.pileId===undefined)continue;
+   if(!piles.has(e.pileId)||capped.has(e.pileId))fail();
+   capped.add(e.pileId);
+  }
+  syncPileCaps(f);
   for(const e of listElements(f))if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
  }
  return value;

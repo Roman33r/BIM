@@ -35,6 +35,22 @@
 .structure-picker strong,.structure-picker small{display:block}
 .structure-picker small{margin-top:3px;color:var(--muted)}
 .group-actions>.button{margin:0 3px 12px 0}
+.plan-ruler,.plan-ruler-unit{position:absolute;background:var(--panel-soft);color:var(--secondary);z-index:1;pointer-events:none;overflow:hidden}
+.plan-ruler-x{top:0;left:24px;right:0;height:22px;border-bottom:1px solid var(--line)}
+.plan-ruler-y{left:0;top:22px;bottom:0;width:24px;border-right:1px solid var(--line)}
+.plan-ruler-unit{inset:0 auto auto 0;width:24px;height:22px;display:grid;place-items:center;border:solid var(--line);border-width:0 1px 1px 0;font-size:9px}
+.plan-ruler svg{display:block;font-size:9px;font-variant-numeric:tabular-nums}
+.plan-pane:has(.plan-ruler-x:not([hidden])) .viewport-heading{top:31px;left:34px}
+.ruler-button[aria-pressed=true]{background:var(--blue-light);color:var(--blue)}
+.measure-result{position:absolute;left:36px;bottom:34px;z-index:2;display:flex;flex-wrap:wrap;gap:4px 13px;max-width:calc(100% - 100px);padding:8px 11px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--secondary);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
+.measure-result strong{font-weight:650;color:var(--text)}
+.rotation-controls{display:flex;justify-content:flex-end;gap:5px;margin-top:-8px;margin-bottom:12px}
+.rotation-controls .button{height:26px;padding:0 7px;font-size:10px}
+.inspector-tabs{display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+.inspector-tabs button{flex:1;height:32px;border-radius:5px;color:var(--secondary);font-size:12px}
+.inspector-tabs button[aria-pressed=true]{color:var(--blue);background:var(--blue-light)}
+.property-section .position-reference{margin:0 0 9px;color:var(--secondary)}
+.section-heading{color:var(--text)}
 @media(max-height:800px){.tools-top{gap:4px}.tools-top .tool{height:43px;padding:4px 3px;gap:3px}.tools-top .tool i{width:20px;height:20px}}
 .angle-label{paint-order:stroke;stroke:var(--canvas,#fff);stroke-width:.08;stroke-linejoin:round}
 .tools-top{overflow:auto;min-height:0}

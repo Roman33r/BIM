@@ -58,10 +58,22 @@
 .inspector-tabs button[aria-pressed=true]{color:var(--blue);background:var(--blue-light)}
 .property-section .position-reference{margin:0 0 9px;color:var(--secondary)}
 .section-heading{color:var(--text)}
-@media(max-height:800px){.tools-top{gap:4px}.tools-top .tool{height:43px;padding:4px 3px;gap:3px}.tools-top .tool i{width:20px;height:20px}}
 .angle-label{paint-order:stroke;stroke:var(--canvas,#fff);stroke-width:.08;stroke-linejoin:round}
-.tools-top{overflow:auto;min-height:0}
-.tools-top .tool{flex:none}
+body{color-scheme:light}body.dark{color-scheme:dark}
+.tool-rail{min-width:0;min-height:0;overflow:hidden;padding:8px 4px 6px}
+.tools-top{flex:1 1 auto;min-width:0;min-height:0;gap:3px;padding:2px 2px 4px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.tools-top .tool{flex:0 0 auto;width:100%;min-width:0;min-height:50px;height:auto;padding:6px 2px;gap:5px}
+.tools-top .tool i{width:22px;height:22px}
+.tools-top .tool span{display:block;max-width:100%;font-size:9px;line-height:1.2;text-align:center;white-space:normal;overflow-wrap:anywhere}
+.tool-rail .tool:focus-visible{outline-offset:-2px}
+.tools-bottom{flex:0 0 auto;margin-top:8px;padding-top:6px;gap:4px;border-top:1px solid var(--line)}
+.tools-bottom .tool{flex:none;width:100%;height:32px;padding:5px}
+.tools-top::-webkit-scrollbar{width:5px;height:0}
+.tools-top::-webkit-scrollbar-track{background:transparent}
+.tools-top::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+.tools-top::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+.tools-top::-webkit-scrollbar-button{display:none;width:0;height:0}
+@media(max-height:800px){.tools-top{gap:3px}.tools-top .tool{min-height:44px;padding:4px 2px;gap:3px}.tools-top .tool i{width:20px;height:20px}}
 @media(max-width:760px){.floor-controls select{max-width:120px}}
 #raise-button,#lower-button{font-size:11px;white-space:nowrap;min-width:32px}
 .view-cube{position:absolute;right:10px;top:35px;width:136px;height:147px;z-index:12;user-select:none;filter:drop-shadow(0 2px 4px #14243d18);font-family:Segoe UI,Arial,sans-serif}
@@ -76,5 +88,7 @@
 .cube-opposite{cursor:pointer;outline:none}.cube-opposite rect{fill:var(--panel,#fff);stroke:var(--line,#cdd5e0)}.cube-opposite text{fill:var(--secondary,#667282);font-size:15px;pointer-events:none}.cube-opposite:hover rect,.cube-opposite:focus rect{stroke:#2164ff}
 .plan-pane .north-indicator,#reset-camera{display:none}
 .connection-properties{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}.connection-properties h3{font-size:12px;margin:0 0 8px;font-weight:600}
-@media(max-width:1100px){#surface-placement-button span,#hole-xray-button span{display:none}}
+.status-left button.status-icon{width:auto;min-width:25px}
+@media(max-width:1100px){.status-left .status-icon span{display:none}}
+@media(max-width:540px){.status-left{gap:4px}.status-left button{gap:4px}#scale-button>span{display:none}}
 @media(max-width:760px){#import-button{display:inline-flex;width:30px;padding:0;justify-content:center}#import-button span{display:none}}

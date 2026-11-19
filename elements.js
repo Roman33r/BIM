@@ -30,6 +30,14 @@ export function findElement(floor,id){
  return null;
 }
 export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...floor.slabs,...floor.furniture,...floor.rooms,...floor.dimensions];}
+export function setOpeningDoor(opening,installed){
+ const from=installed?'doorway':'door',to=installed?'door':'doorway';
+ if(opening.kind!==from)return false;
+ const names={door:'Дверь',doorway:'Дверной проём'};
+ if(opening.name===names[from])opening.name=names[to];
+ opening.kind=to;
+ return true;
+}
 export function elementPosition(element,host){
  if(host){const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y);return {x:host.a.x+(host.b.x-host.a.x)*element.position/length,y:host.a.y+(host.b.y-host.a.y)*element.position/length};}
  if(element.a)return {...(element.mode==='angle'?element.vertex:element.a)};

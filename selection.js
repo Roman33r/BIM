@@ -2,7 +2,7 @@ import {elementFrame, framePoint, add, mul} from './transforms.js';
 import {angleGeometry} from './annotations.js';
 
 export const AXIS_TYPES = Object.freeze({
- wall:'Стены', door:'Двери', window:'Окна', slab:'Перекрытия',
+ wall:'Стены', doorway:'Дверные проёмы', door:'Двери', window:'Окна', slab:'Перекрытия',
  furniture:'Мебель и оборудование', room:'Помещения', dimension:'Размеры'
 });
 

@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import {wallLength} from './model.js';
+import {openingSpan,wallBlocks,wallLength} from './model.js';
 import {buildFurniture} from './furniture-scene.js';
 import {elementFrame,framePoint,elementAxes,transformHandles} from './transforms.js';
 import {axisElements,elementVisible,selectionBounds,showSelectionBox} from './selection.js';
@@ -8,7 +8,8 @@ import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
 export function createScene(container,onSelect,gestures={}){
- const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;container.append(renderer.domElement);
+ const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
+ renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(35,1,.1,2000),group=new THREE.Group();const overlays=new THREE.Group();
  scene.add(group,overlays);
  const marquee=document.createElement('div');
@@ -27,8 +28,13 @@ export function createScene(container,onSelect,gestures={}){
  const selectedMat=new THREE.MeshStandardMaterial({color:0x6299ff,roughness:.5,transparent:true,opacity:.72});
  const frame=new THREE.MeshStandardMaterial({color:0x65717b,roughness:.6});
  const glass=new THREE.MeshStandardMaterial({color:0xbfdce9,transparent:true,opacity:.35,roughness:.2,metalness:.15});
- const textures=new Map(),surfaceMaterials=new Map(),sharedMaterials=new Set([selectedMat,frame,glass]);
- function material(name,selected){
+ const plain=new THREE.MeshStandardMaterial({color:0xffffff,roughness:.84});
+ const plainGlass=new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:.35,roughness:.2});
+ const apertureHit=new THREE.MeshBasicMaterial({visible:false});
+ const apertureOutline=new THREE.LineBasicMaterial({color:0x2164ff});
+ const textures=new Map(),surfaceMaterials=new Map(),sharedMaterials=new Set([selectedMat,frame,glass,plain,plainGlass,apertureHit,apertureOutline]);
+ function material(name,selected,textured){
+  if(!textured)return selected?selectedMat:plain;
   const spec=materialSpec(name),key=spec.id+(selected?'-selected':'');
   if(!surfaceMaterials.has(key)){
    if(!textures.has(spec.id))textures.set(spec.id,createMaterialTexture(THREE,spec));
@@ -50,19 +56,54 @@ export function createScene(container,onSelect,gestures={}){
   const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;
   if(id)mesh.userData.elementId=id;layer.add(mesh);return mesh;
  }
- function localBox(layer,wall,start,end,bottom,top,mat,id){const len=wallLength(wall),mid=(start+end)/2,x=wall.a.x+(wall.b.x-wall.a.x)*mid/len,z=wall.a.y+(wall.b.y-wall.a.y)*mid/len;const mesh=box(layer,end-start,top-bottom,wall.thickness,x-6,(bottom+top)/2,z-4.5,mat,id);if(mesh)mesh.rotation.y=-Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x);}
- function buildLevel(layer,floor,ids,opts,annotate){
-  const heightLimit=1.15;
-  for(const slab of floor.slabs){const shape=new THREE.Shape();slab.points.forEach((p,i)=>i?shape.lineTo(p.x-6,p.y-4.5):shape.moveTo(p.x-6,p.y-4.5));shape.closePath();const geometry=new THREE.ExtrudeGeometry(shape,{depth:slab.thickness,bevelEnabled:false});geometry.rotateX(Math.PI/2);const mesh=new THREE.Mesh(geometry,material(slab.material,ids.has(slab.id)));mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=slab.id;layer.add(mesh);}
-
-  for(const wall of floor.walls){const mat=material(wall.material,ids.has(wall.id)),len=wallLength(wall),h=section?Math.min(wall.height,heightLimit):wall.height;let cursor=0;
-   for(const o of [...wall.openings].sort((a,b)=>a.position-b.position)){const start=o.position-o.width/2,end=o.position+o.width/2;localBox(layer,wall,cursor,start,0,h,mat,wall.id);if(o.sill>0)localBox(layer,wall,start,end,0,Math.min(o.sill,h),mat,wall.id);if(o.sill+o.height<h)localBox(layer,wall,start,end,o.sill+o.height,h,mat,wall.id);
-    if(o.kind==='window'&&o.sill<h){localBox(layer,wall,start,end,o.sill,Math.min(o.sill+o.height,h),ids.has(o.id)?selectedMat:glass,o.id);const center=new THREE.Vector3(wall.a.x+(wall.b.x-wall.a.x)*o.position/len-6,o.sill+Math.min(o.height,h-o.sill)/2,wall.a.y+(wall.b.y-wall.a.y)*o.position/len-4.5);const direction=Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x);for(const position of [start,end]){const x=wall.a.x+(wall.b.x-wall.a.x)*position/len-6,z=wall.a.y+(wall.b.y-wall.a.y)*position/len-4.5;box(layer,.045,Math.min(o.height,h-o.sill),.045,x,center.y,z,frame,o.id);}const bar=box(layer,o.width,.04,.06,center.x,o.sill,center.z,frame,o.id);if(bar)bar.rotation.y=-direction;const top=box(layer,o.width,.04,.06,center.x,Math.min(o.sill+o.height,h),center.z,frame,o.id);if(top)top.rotation.y=-direction;}
-    if(o.kind==='door')localBox(layer,wall,start,end,0,Math.min(o.height,h),material('Дерево',ids.has(o.id)),o.id);
-    cursor=end;
-   }localBox(layer,wall,cursor,len,0,h,mat,wall.id);
+ function localBox(layer,wall,start,end,bottom,top,mat,id,depth=wall.thickness){
+  const len=wallLength(wall),mid=(start+end)/2,x=wall.a.x+(wall.b.x-wall.a.x)*mid/len,z=wall.a.y+(wall.b.y-wall.a.y)*mid/len;
+  const mesh=box(layer,end-start,top-bottom,depth,x-6,(bottom+top)/2,z-4.5,mat,id);
+  if(mesh)mesh.rotation.y=-Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x);
+  return mesh;
+ }
+ function buildDoor(layer,wall,opening,height,selected,textured){
+  const [start,end]=openingSpan(opening),bottom=opening.sill,top=Math.min(bottom+opening.height,height);
+  const jamb=.036,leafTop=bottom+opening.height-jamb;
+  const frameMaterial=selected?selectedMat:textured?frame:plain;
+  for(const [left,right] of [[start,start+jamb],[end-jamb,end]]){
+   localBox(layer,wall,left,right,bottom,top,frameMaterial,opening.id);
   }
-  for(const item of floor.furniture)buildFurniture(THREE,layer,item,ids.has(item.id)?selectedMat:null);
+  localBox(layer,wall,start+jamb,end-jamb,leafTop,top,frameMaterial,opening.id);
+  const leaf=material('Дерево',selected,textured);
+  localBox(layer,wall,start+jamb+.003,end-jamb-.003,bottom+.008,Math.min(top,leafTop-.003),leaf,opening.id,Math.min(.045,wall.thickness));
+ }
+ function buildEmptyDoorway(layer,wall,opening,height,selected){
+  const [start,end]=openingSpan(opening);
+  const hit=localBox(layer,wall,start,end,opening.sill,Math.min(height,opening.sill+opening.height),apertureHit,opening.id);
+  if(!hit)return;
+  hit.castShadow=false;hit.receiveShadow=false;
+  if(selected)hit.add(new THREE.LineSegments(new THREE.EdgesGeometry(hit.geometry),apertureOutline));
+ }
+ function buildLevel(layer,floor,ids,opts,annotate){
+  const heightLimit=1.15,textured=opts.textures!==false;
+  for(const slab of floor.slabs){const shape=new THREE.Shape();slab.points.forEach((p,i)=>i?shape.lineTo(p.x-6,p.y-4.5):shape.moveTo(p.x-6,p.y-4.5));shape.closePath();const geometry=new THREE.ExtrudeGeometry(shape,{depth:slab.thickness,bevelEnabled:false});geometry.rotateX(Math.PI/2);const mesh=new THREE.Mesh(geometry,material(slab.material,ids.has(slab.id),textured));mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=slab.id;layer.add(mesh);}
+
+  for(const wall of floor.walls){
+   const mat=material(wall.material,ids.has(wall.id),textured),h=section?Math.min(wall.height,heightLimit):wall.height;
+   for(const {start,end,bottom,top} of wallBlocks(wall,h))localBox(layer,wall,start,end,bottom,top,mat,wall.id);
+   for(const o of wall.openings){
+    if(o.sill>=h)continue;
+    const isSelected=ids.has(o.id);
+    if(o.kind==='doorway'){
+     if(annotate)buildEmptyDoorway(layer,wall,o,h,isSelected);
+    }else if(o.kind==='door')buildDoor(layer,wall,o,h,isSelected,textured);
+    else{
+     const [start,end]=openingSpan(o),top=Math.min(o.sill+o.height,h);
+     const pane=isSelected?selectedMat:textured?glass:plainGlass,trim=textured?frame:plain;
+     localBox(layer,wall,start,end,o.sill,top,pane,o.id);
+     for(const x of [start,end-.045])localBox(layer,wall,x,x+.045,o.sill,top,trim,o.id,.06);
+     localBox(layer,wall,start,end,o.sill,Math.min(o.sill+.04,top),trim,o.id,.06);
+     if(o.sill+o.height<=h)localBox(layer,wall,start,end,top-.04,top,trim,o.id,.06);
+    }
+   }
+  }
+  for(const item of floor.furniture)buildFurniture(THREE,layer,item,ids.has(item.id)?selectedMat:textured?null:plain);
   if(!annotate)return;
   for(const room of floor.rooms){
    const frame=elementFrame(room);if(opts.labels!==false)label(layer,room.name,frame.center.x,.12,frame.center.y,room.id,ids.has(room.id));
@@ -239,6 +280,10 @@ export function createScene(container,onSelect,gestures={}){
  });
  container.addEventListener('pointerup',event=>{
   const gesture=drag;drag=null;marquee.hidden=true;
+  if(gesture?.mode==='orbit'&&event.button===2&&!gesture.active){
+   const hit=pick(event);
+   gestures.context?.(event,hit?.object.userData.elementId,hit?{x:hit.point.x+6,y:hit.point.z+4.5}:null);
+  }
   if(gesture?.mode==='transform')gestures.end?.();
   if(gesture?.mode==='select'){
    if(gesture.active)gestures.selectMany?.(selectInView(selectionBounds(gesture.start,clientPoint(event))),gesture.extend);

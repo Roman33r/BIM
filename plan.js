@@ -1,4 +1,4 @@
-import {wallLength,wallSegments} from './model.js';
+import {openingSpan,wallLength,wallSegments} from './model.js';
 import {furniturePlan} from './furniture-plan.js';
 import {editorOverlay} from './editor-overlay.js';
 import {elementFrame,framePoint,dot,sub} from './transforms.js';
@@ -37,13 +37,19 @@ function floorReference(floor,color){
  }
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
-export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,labels=true,dimensions=true,dark=false,draft=[],angleDraft,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
+export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
  const colors=dark?{'--plan-text':'#dce5f2','--plan-dimension':'#778799','--wall-fill':'#737d8d','--wall-line':'#9ca9bc','--furniture-stroke':'#8794a6','--furniture-fill':'#2b3441','--plant-fill':'#394b40','--plant-stroke':'#758f7c'}:{'--plan-text':'#313b48','--plan-dimension':'#9ba3ae','--wall-fill':'#7f848c','--wall-line':'#525b67','--furniture-stroke':'#939b9f','--furniture-fill':'#fafbf9','--plant-fill':'#f0f5ee','--plant-stroke':'#a0b19c'};
- const defs=`<defs><pattern id="dots" width=".25" height=".25" patternUnits="userSpaceOnUse"><circle cx=".02" cy=".02" r=".009" fill="${dark?'#3e4857':'#dce2eb'}"/></pattern><pattern id="tiles" width=".28" height=".28" patternUnits="userSpaceOnUse"><path d="M.28 0H0V.28" fill="none" stroke="${dark?'#3c4652':'#e1e5e7'}" stroke-width=".012"/></pattern>${materialPatterns(dark)}</defs>`;
+ if(!textures){
+  colors['--furniture-fill']='#fff';colors['--plant-fill']='#fff';
+  colors['--wall-line']='#667282';
+ }
+ const tilePattern=textures?`<pattern id="tiles" width=".28" height=".28" patternUnits="userSpaceOnUse"><path d="M.28 0H0V.28" fill="none" stroke="${dark?'#3c4652':'#e1e5e7'}" stroke-width=".012"/></pattern>`+materialPatterns(dark):'';
+ const defs=`<defs><pattern id="dots" width=".25" height=".25" patternUnits="userSpaceOnUse"><circle cx=".02" cy=".02" r=".009" fill="${dark?'#3e4857':'#dce2eb'}"/></pattern>${tilePattern}</defs>`;
+ const surfaceFill=material=>textures?`url(#material-${materialSpec(material).id})`:'#fff';
  let content=grid?rect(-100,-100,200,200,'fill="url(#dots)"'):'';
- for(const slab of floor.slabs)content+=`<polygon points="${coords(slab.points)}" fill="url(#material-${materialSpec(slab.material).id})" fill-opacity="${dark?.28:.24}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"/>`;
+ for(const slab of floor.slabs)content+=`<polygon points="${coords(slab.points)}" fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"/>`;
  for(const reference of referenceFloors)content+=floorReference(reference,reference.elevation>=floor.elevation?(dark?'#7ca6e7':'#678acc'):(dark?'#c49bd5':'#a16eb8'));
- for(const room of floor.rooms){const transform=`transform="translate(${room.x} ${room.y}) rotate(${room.rotation||0})"`;if(room.name==='Санузел')content+=rect(0,0,room.w,room.h,`${transform} fill="url(#tiles)" pointer-events="none"`);if(selectedIds.has(room.id))content+=rect(0,0,room.w,room.h,`${transform} fill="#2164ff0b" stroke="#2164ff" stroke-width=".025" stroke-dasharray=".1 .06" pointer-events="none"`);}
+ for(const room of floor.rooms){const transform=`transform="translate(${room.x} ${room.y}) rotate(${room.rotation||0})"`;if(textures&&room.name==='Санузел')content+=rect(0,0,room.w,room.h,`${transform} fill="url(#tiles)" pointer-events="none"`);if(selectedIds.has(room.id))content+=rect(0,0,room.w,room.h,`${transform} fill="#2164ff0b" stroke="#2164ff" stroke-width=".025" stroke-dasharray=".1 .06" pointer-events="none"`);}
  content+=furniturePlan(floor.furniture,selectedIds);
  const hidden=hiddenWallEnds(floor.walls), hiddenByWall=new Map();
  for(const end of hidden)hiddenByWall.set(end.id,[...(hiddenByWall.get(end.id)||[]),...end.strokes]);
@@ -51,7 +57,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   const l=wallLength(wall),angle=Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x)*180/Math.PI,selected=selectedIds.has(wall.id);
   content+=`<g transform="translate(${wall.a.x} ${wall.a.y}) rotate(${angle})" data-element="${esc(wall.id)}" class="movable-element">`;
   content+=rect(0,-Math.max(.15,wall.thickness/2),l,Math.max(.3,wall.thickness),'fill="transparent" stroke="none"');
-  const segments=wallSegments(wall),fill=`url(#material-${materialSpec(wall.material).id})`;
+  const segments=wallSegments(wall),fill=surfaceFill(wall.material);
   const segmentRects=attrs=>segments.map(([start,end])=>rect(start,-wall.thickness/2,end-start,wall.thickness,attrs)).join('');
   content+=segmentRects(`fill="${fill}"`);
   if(selected)content+=segmentRects('fill="#2164ff" fill-opacity=".22" pointer-events="none"');
@@ -61,9 +67,12 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
    const f=elementFrame(wall),local=p=>({x:dot(sub(p,wall.a),f.u),y:dot(sub(p,wall.a),f.v)}),mask=`wall-end-${index}`;
    content+=`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-.1" y="${-wall.thickness}" width="${l+.2}" height="${2*wall.thickness}">${rect(-.1,-wall.thickness,l+.2,2*wall.thickness,'fill="white"')}${covered.map(points=>trace(points.map(local),'stroke="black" stroke-width=".06"')).join('')}</mask><g mask="url(#${mask})">${segmentRects(stroke)}</g>`;
   }else content+=segmentRects(stroke);
-  for(const o of wall.openings){const x=o.position-o.width/2,sel=selectedIds.has(o.id);content+=`<g data-element="${esc(o.id)}" stroke="${sel?'#2164ff':'var(--furniture-stroke)'}" stroke-width="${sel?.035:.016}" fill="none">${rect(x,-wall.thickness/2,o.width,wall.thickness,'fill="var(--canvas,#fff)"')}`;
+  for(const o of wall.openings){
+   const [x]=openingSpan(o),sel=selectedIds.has(o.id),hitHeight=Math.max(.3,wall.thickness);
+   content+=`<g data-element="${esc(o.id)}" data-opening-kind="${o.kind}" stroke="${sel?'#2164ff':'var(--furniture-stroke)'}" stroke-width="${sel?.035:.016}" fill="none">${rect(x,-hitHeight/2,o.width,hitHeight,'fill="transparent" stroke="none"')}`;
    if(o.kind==='window')content+=path(`M${n(x)} -.045h${n(o.width)}M${n(x)} .045h${n(o.width)}`);
-   else content+=path(`M${n(x)} 0v${n(o.width)}M${n(x)} ${n(o.width)}A${n(o.width)} ${n(o.width)} 0 0 0 ${n(x+o.width)} 0`);
+   if(o.kind==='door')content+=path(`M${n(x)} 0v${n(o.width)}M${n(x)} ${n(o.width)}A${n(o.width)} ${n(o.width)} 0 0 0 ${n(x+o.width)} 0`);
+   if(o.kind==='doorway'&&sel)content+=rect(x,-wall.thickness/2,o.width,wall.thickness,'stroke-dasharray=".09 .06" pointer-events="none"');
    content+='</g>';
   }
   content+='</g>';

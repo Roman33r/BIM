@@ -1,4 +1,4 @@
-const paths={angle:'M18 4 4 19h17M10 13a8 8 0 0 1 2 6',axis:'M12 2v20M2 12h20M9 5l3-3 3 3M19 9l3 3-3 3',align:'M3 3v18M6 5h12v5H6zM6 14h8v5H6z',
+const paths={doorway:'M3 20h3V4h12v16h3M9 20h2m2 0h2',palette:'M12 3a9 9 0 1 0 0 18h1.5a1.8 1.8 0 0 0 1.3-3c-.9-1 .1-2.4 1.2-2.4h1.8a3.2 3.2 0 0 0 3.2-3.2A9 9 0 0 0 12 3ZM7 11h.01m3-4h.01m4 0h.01m3 4h.01',angle:'M18 4 4 19h17M10 13a8 8 0 0 1 2 6',axis:'M12 2v20M2 12h20M9 5l3-3 3 3M19 9l3 3-3 3',align:'M3 3v18M6 5h12v5H6zM6 14h8v5H6z',
  chevron:'m6 9 6 6 6-6',plus:'M12 5v14M5 12h14',minus:'M5 12h14',close:'m6 6 12 12M18 6 6 18',
  cursor:'m5 3 14 10-7 1-3 7L5 3Z',wall:'M3 6h18v12H3zM3 12h18M8 6v6m8-6v6M12 12v6',door:'M5 21V3h14v18M5 21h14M15 12h.01',window:'M3 3h18v18H3zM12 3v18M3 12h18',
  layers:'m3 8 9-5 9 5-9 5-9-5Zm0 4 9 5 9-5M3 16l9 5 9-5',dimension:'M3 5v14M21 5v14M3 12h18m-4-3 4 3-4 3M7 9l-4 3 4 3',

@@ -25,6 +25,11 @@
 .floor-form{display:grid;gap:8px}
 .floor-form input{width:100%;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);padding:9px 10px}
 .floor-form label{margin-top:5px}
+.floor-form .form-error{margin:3px 0 0;color:var(--text);border-left:2px solid #d25454;padding-left:9px}
+.opening-action{width:100%;margin-top:8px}
+.editor-menu{position:fixed;right:auto;width:max-content;min-width:210px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto}
+.editor-menu button:focus-visible{outline-offset:-2px;background:var(--hover)}
+@media(max-height:780px){.tools-top{gap:5px}.tools-top .tool{height:48px}}
 .angle-label{paint-order:stroke;stroke:var(--canvas,#fff);stroke-width:.08;stroke-linejoin:round}
 .tools-top{overflow:auto;min-height:0}
 .tools-top .tool{flex:none}

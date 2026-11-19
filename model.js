@@ -13,15 +13,28 @@ export function projectPoint(point,wall){
 export function polygonArea(points){return Math.abs(points.reduce((sum,p,i)=>{const q=points[(i+1)%points.length];return sum+p.x*q.y-q.x*p.y},0))/2;}
 export function canPlaceOpening(wall,opening,exceptId=null){
   const length=wallLength(wall),start=opening.position-opening.width/2,end=opening.position+opening.width/2;
-  return opening.width>=0.3&&opening.height>=0.3&&opening.sill>=0&&opening.sill+opening.height<=wall.height+0.0001&&start>=0.08&&end<=length-0.08&&wall.openings.every(other=>other.id===exceptId||end+0.08<=other.position-other.width/2||start-0.08>=other.position+other.width/2);
+  const margin=.08,tolerance=1e-9;
+  return opening.width>=0.3&&opening.height>=0.3&&opening.sill>=0&&opening.sill+opening.height<=wall.height+0.0001
+   &&start>=margin-tolerance&&end<=length-margin+tolerance
+   &&wall.openings.every(other=>other.id===exceptId||end+margin<=other.position-other.width/2+tolerance||start-margin>=other.position+other.width/2-tolerance);
 }
+export function openingSpan({position,width}){return [position-width/2,position+width/2];}
 export function wallSegments(wall){
   const length=wallLength(wall);let cursor=0;const result=[];
   for(const opening of [...wall.openings].sort((a,b)=>a.position-b.position)){
-    const start=Math.max(0,opening.position-opening.width/2),end=Math.min(length,opening.position+opening.width/2);
+    const [left,right]=openingSpan(opening),start=Math.max(0,left),end=Math.min(length,right);
     if(start>cursor)result.push([cursor,start]);cursor=Math.max(cursor,end);
   }
   if(cursor<length)result.push([cursor,length]);return result;
+}
+export function wallBlocks(wall,height=wall.height){
+ const blocks=wallSegments(wall).map(([start,end])=>({start,end,bottom:0,top:height}));
+ for(const opening of wall.openings){
+  const [start,end]=openingSpan(opening),lintel=opening.sill+opening.height;
+  if(opening.sill>0)blocks.push({start,end,bottom:0,top:Math.min(opening.sill,height)});
+  if(lintel<height)blocks.push({start,end,bottom:lintel,top:height});
+ }
+ return blocks;
 }
 function makeWall(id,a,b,openings=[],outer=false){return {id,kind:'wall',name:outer?'Наружная стена':'Внутренняя стена',a:{x:a[0],y:a[1]},b:{x:b[0],y:b[1]},thickness:outer?0.3:0.15,height:3,material:outer?'Кирпич':'Газобетон',loadBearing:outer,openings};}
 const windowAt=(id,position,width=1.8)=>({id,kind:'window',name:'Окно',position,width,height:1.5,sill:0.9});
@@ -48,7 +61,7 @@ export function validateProject(value){
  if(!str(value.id))fail();
  for(const f of value.floors){
   id(f.id);if(!str(f.name)||!num(f.elevation,-100,200)||!num(f.height,1,15)||!Array.isArray(f.walls)||f.walls.length>2000||!Array.isArray(f.slabs)||f.slabs.length>200||!Array.isArray(f.rooms)||f.rooms.length>500||!Array.isArray(f.dimensions)||f.dimensions.length>1000)fail();
-  for(const w of f.walls){id(w.id);if(w.kind!=='wall'||!str(w.name)||!str(w.material)||!point(w.a)||!point(w.b)||!num(wallLength(w),0.2,100)||!num(w.thickness,0.05,1.5)||!num(w.height,1,15)||!Array.isArray(w.openings)||w.openings.length>100)fail();for(const o of w.openings){id(o.id);if(!['door','window'].includes(o.kind)||!str(o.name)||!num(o.position,0,100)||!num(o.width,0.3,10)||!num(o.height,0.3,15)||!num(o.sill,0,15)||!canPlaceOpening(w,o,o.id))fail();}}
+  for(const w of f.walls){id(w.id);if(w.kind!=='wall'||!str(w.name)||!str(w.material)||!point(w.a)||!point(w.b)||!num(wallLength(w),0.2,100)||!num(w.thickness,0.05,1.5)||!num(w.height,1,15)||!Array.isArray(w.openings)||w.openings.length>100)fail();for(const o of w.openings){id(o.id);if(!['door','doorway','window'].includes(o.kind)||!str(o.name)||!num(o.position,0,100)||!num(o.width,0.3,10)||!num(o.height,0.3,15)||!num(o.sill,0,15)||!canPlaceOpening(w,o,o.id))fail();}}
   for(const s of f.slabs){id(s.id);if(s.kind!=='slab'||!str(s.name)||!str(s.material)||!num(s.thickness,0.05,1.5)||!Array.isArray(s.points)||s.points.length<3||s.points.length>200||!s.points.every(point)||polygonArea(s.points)<0.1||!isSimplePolygon(s.points)||!num(s.rotation??0,-360,360))fail();}
   for(const r of f.rooms){id(r.id);if(r.kind!=='room'||!str(r.name)||!num(r.x)||!num(r.y)||!num(r.w,0.1,100)||!num(r.h,0.1,100)||!num(r.rotation??0,-360,360))fail();}
   for(const d of f.dimensions){

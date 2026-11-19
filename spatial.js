@@ -1,5 +1,5 @@
 import {elementFootprint,elementFrame,normalAngle} from './transforms.js';
-import {isPileCap,isRoundStructure,isStructure,screwBladeMesh} from './structures.js';
+import {isPileCap,isRoundStructure,isStructure,rimBoardSegments,screwBladeMesh} from './structures.js';
 
 export const tiltFields=['tiltX','tiltY'];
 export const canTiltElement=e=>['wall','slab','furniture','foundation','framing'].includes(e.kind);
@@ -54,12 +54,13 @@ function convexOutline(points){
  return [...side(unique),...side(unique.reverse())];
 }
 
-export function projectedElement(e,support){
+export function projectedElement(e,support,members=[]){
  const tilts=elementTilts(e,support);
  if(!tilts.length)return [];
  const [bottom,top]=verticalRange(e);
  const shaft=e.type==='screwPile'?{...e,bladeDiameter:e.diameter}:e;
- const prism=elementFootprint(shaft).flatMap(p=>[{...p,z:bottom},{...p,z:top}]);
+ const footprint=e.type==='rim'?rimBoardSegments(e,members).flatMap(board=>elementFootprint({...e,...board})):elementFootprint(shaft);
+ const prism=footprint.flatMap(p=>[{...p,z:bottom},{...p,z:top}]);
  if(e.type==='screwPile'){
   const {vertices}=screwBladeMesh(e);
   for(let i=0;i<vertices.length;i+=3)prism.push({x:e.x+vertices[i],z:bottom+vertices[i+1],y:e.y+vertices[i+2]});
@@ -70,7 +71,7 @@ export function projectedElement(e,support){
 export function floorTiltProjections(floor){
  const structures=floor.structures||[],byId=new Map(structures.map(e=>[e.id,e])),projections=new Map();
  for(const element of [...floor.walls,...floor.slabs,...(floor.furniture||[]),...structures]){
-  const outline=projectedElement(element,isPileCap(element)?byId.get(element.pileId):undefined);
+  const outline=projectedElement(element,isPileCap(element)?byId.get(element.pileId):undefined,structures);
   if(outline.length>1)projections.set(element.id,outline);
  }
  return projections;

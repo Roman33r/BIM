@@ -40,10 +40,28 @@ test('selected pile sizes measure shaft extents, center distances and slope inde
  const dimensions=selectedPileDimensions(floor,new Set(['a','b','beam']));
  assert.equal(dimensions.links.length,1);assert.equal(dimensions.links[0].length,5);
  assert.ok(Math.abs(dimensions.links[0].angle-53.13010235415598)<1e-8);
- assert.ok(Math.abs(dimensions.overall.length-(5+(.3+.108)/2))<1e-8);
+ assert.deepEqual(dimensions.overall.map(d=>d.axis),['x','y']);
+ assert.ok(Math.abs(dimensions.overall[0].length-(3+(.3+.108)/2))<1e-8);
+ assert.ok(Math.abs(dimensions.overall[1].length-(4+(.3+.108)/2))<1e-8);
+ assert.ok(dimensions.overall.every(d=>d.a.x===d.b.x||d.a.y===d.b.y));
  assert.equal(selectedPileDimensions(floor,new Set(['a'])),null);
  const svg=renderPlan(floor,{selectedIds:new Set(['a','b']),interactive:true}).content;
- assert.match(svg,/pile-selection-dimensions/);assert.match(svg,/Общий/);assert.match(svg,/Центры/);
+ assert.match(svg,/pile-selection-dimensions/);assert.match(svg,/Общая длина/);assert.match(svg,/Общая ширина/);assert.match(svg,/Центры/);
+});
+
+test('a selected pile row has one straight overall dimension; a field has two outer dimensions',()=>{
+ const floor=createEmptyProject().floors[0];
+ floor.structures=[makeStructure('screwPile','a',[{x:0,y:0}]),makeStructure('screwPile','b',[{x:6,y:0}]),makeStructure('screwPile','c',[{x:0,y:3}]),makeStructure('screwPile','d',[{x:6,y:3}])];
+ const row=selectedPileDimensions(floor,new Set(['a','b']));
+ assert.equal(row.overall.length,1);assert.equal(row.overall[0].axis,'x');
+ assert.ok(Math.abs(row.overall[0].length-6.108)<1e-9);
+ const field=selectedPileDimensions(floor,new Set(['a','b','c','d']));
+ assert.ok(Math.abs(field.overall[0].length-6.108)<1e-9);
+ assert.ok(Math.abs(field.overall[1].length-3.108)<1e-9);
+ const vertical=selectedPileDimensions(floor,new Set(['a','c']));
+ assert.deepEqual(vertical.overall.map(d=>d.axis),['y']);
+ const svg=renderPlan(floor,{selectedIds:new Set(['a','b','c','d']),interactive:true}).content;
+ assert.equal((svg.match(/class="pile-overall-dimension"/g)||[]).length,2);
 });
 
 test('configured grid uses its own snap spacing and can be hidden separately',()=>{

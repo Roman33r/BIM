@@ -189,7 +189,7 @@ function sectionTitle(title){return `<h2 class="section-heading">${title}</h2>`;
 function structureProperties(e){
  const dimensions=[],shape=STRUCTURE_TYPES[e.type].shape;
  const screw=e.type==='screwPile';
- if(shape==='line')dimensions.push(['length','Длина',wallLength(e),50,100000],['thickness','Ширина сечения',e.thickness,20,10000]);
+ if(shape==='line')dimensions.push(['length','Длина',wallLength(e),50,100000],['thickness',e.type==='rim'?'Ширина пакета':'Ширина сечения',e.thickness,20,10000]);
  if(shape==='round')dimensions.push(['diameter',screw?'Диаметр ствола':'Диаметр',e.diameter,50,screw?Math.floor(e.bladeDiameter*1000+1e-7)-10:10000]);
  if(screw)dimensions.push(
   ['bladeDiameter','Диаметр лопасти',e.bladeDiameter,Math.ceil(e.diameter*1000-1e-7)+10,10000],
@@ -199,7 +199,8 @@ function structureProperties(e){
  const heightLabel=e.kind==='framing'?'Высота сечения':shape==='round'?'Длина сваи':shape==='contour'?'Толщина плиты':isPileCap(e)?'Толщина пластины':'Высота';
  dimensions.push(['height',heightLabel,e.height,screw?Math.ceil((e.bladePitch+e.bladeThickness)*1000/.7):isPileCap(e)?5:20,30000]);
  if(e.gauge!==undefined)dimensions.push(['gauge','Толщина профиля',e.gauge,1,Math.floor(1000*Math.min(.9*e.thickness,.45*e.height))]);
- return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('');
+ return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('')
+  +(e.type==='rim'?`<p class="property-note">Пакет из 3 досок ${fmt(e.height*1000)} × ${fmt(e.thickness*1000/3)} мм. На прямых углах торцы досок соединяются вразбежку.</p>`:'');
 }
 function positionProperties(e,host){
  if(host)return propertyInput('position','От начала стены',Math.round(e.position*1000),{min:0,max:100000,step:1})
@@ -739,7 +740,7 @@ function chooseStructure(category){
  modal(category==='foundation'?'Фундаменты':'Каркас перекрытия',`<div class="structure-picker">
   ${category==='foundation'?`<button type="button" id="pile-area-button"><i data-icon="pile"></i><span><strong>Сваи по области</strong><small>Края и деление пополам · шаг ${fmt(pileSpacing*1000)} мм</small></span></button>`:''}
   ${options.map(([type,spec])=>`<button type="button" data-structure="${type}">
-   <i data-icon="${spec.icon}"></i><span><strong>${spec.name}</strong><small>${methods[spec.shape]}</small></span>
+   <i data-icon="${spec.icon}"></i><span><strong>${spec.name}</strong><small>${type==='rim'?'3 доски 200 × 50 мм · ':''}${methods[spec.shape]}</small></span>
   </button>`).join('')}
  </div>`);
  if($('pile-area-button'))$('pile-area-button').onclick=choosePileArea;

@@ -5,7 +5,7 @@ import {elementFrame,elementFootprint,framePoint,dot,sub} from './transforms.js'
 import {angleGeometry,angleLabel,angleRadius} from './annotations.js';
 import {hiddenWallEnds} from './wall-overlaps.js';
 import {materialPatterns,materialSpec} from './materials.js';
-import {isPileCap,isRoundStructure,pileFootprintDiameter} from './structures.js';
+import {isPileCap,isRoundStructure,pileFootprintDiameter,rimBoardSegments} from './structures.js';
 import {segmentMeasurement} from './measurements.js';
 import {floorTiltProjections} from './spatial.js';
 import {guidePoints,guideDash} from './construction-guides.js';
@@ -42,18 +42,19 @@ function constructionPlan(floor,selectedIds,unit){
  }
  return output;
 }
-function structureShape(element,attrs=''){
+function structureShape(element,attrs='',members=[]){
  if(isRoundStructure(element))return `<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(pileFootprintDiameter(element)/2)}" ${attrs}/>`;
+ if(element.type==='rim')return rimBoardSegments(element,members).map(board=>`<polygon class="rim-board" points="${coords(elementFootprint({...element,...board}))}" ${attrs}/>`).join('');
  return `<polygon points="${coords(elementFootprint(element))}" ${attrs}/>`;
 }
-function structurePlan(element,selected,fill,dark){
+function structurePlan(element,selected,fill,dark,members=[]){
  const foundation=element.kind==='foundation',stroke=selected?'#2164ff':dark?'#b8c9dd':'#54677c';
  const attrs=`fill="${fill}" fill-opacity="${foundation&&!selected?.72:1}" stroke="${stroke}" stroke-width="${selected?1.9:1.2}"`
   +(foundation?' stroke-dasharray="5 3"':'')+' vector-effect="non-scaling-stroke"';
  let geometry=element.type==='screwPile'
   ?structureShape(element,`fill="transparent" stroke="${stroke}" stroke-dasharray="4 3" stroke-width="${selected?1.9:1.2}" vector-effect="non-scaling-stroke"`)
    +`<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(element.diameter/2)}" fill="${fill}" stroke="${stroke}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`
-  :structureShape(element,attrs);
+  :structureShape(element,attrs,members);
  if(element.a&&element.thickness<.15){
   geometry+=trace([element.a,element.b],'stroke="transparent" fill="none" stroke-width="9" vector-effect="non-scaling-stroke"');
  }
@@ -83,21 +84,23 @@ function pileSelectionOverlay(floor,selectedIds,unit){
  if(!measured)return '';
  const format=value=>Math.round(value*1000).toLocaleString('ru-RU');
  const stroke='stroke="#2164ff" stroke-width="1" vector-effect="non-scaling-stroke"';
- const caption=(x,y,label)=>text(x,y,label,`class="editor-measure" font-size="${11*unit}" text-anchor="middle" fill="#2164ff"`);
+ const caption=(x,y,label,angle=0)=>text(x,y,label,`class="editor-measure" font-size="${11*unit}" text-anchor="middle" fill="#2164ff"${angle?` transform="rotate(${angle} ${n(x)} ${n(y)})"`:''}`);
  let content='';
  for(const {a,b,length,angle} of measured.links){
   content+=trace([a,b],stroke);
   if(length/unit>=65||measured.links.length===1)content+=caption((a.x+b.x)/2,(a.y+b.y)/2-10*unit,`Центры ${format(length)} мм · ${angle.toLocaleString('ru-RU',{maximumFractionDigits:1})}°`);
  }
- const {a,b,length}=measured.overall,dx=(b.x-a.x)/length,dy=(b.y-a.y)/length,offset=38*unit;
- const start={x:a.x-dy*offset,y:a.y+dx*offset},end={x:b.x-dy*offset,y:b.y+dx*offset};
- content+=trace([a,start,end,b],stroke);
- content+=caption((start.x+end.x)/2,(start.y+end.y)/2+15*unit,`Общий ${format(length)} мм`);
+ for(const {a,b,length,axis} of measured.overall){
+  const offset=38*unit,start={x:a.x+(axis==='y'?offset:0),y:a.y-(axis==='x'?offset:0)},end={x:b.x+(axis==='y'?offset:0),y:b.y-(axis==='x'?offset:0)};
+  content+=`<g class="pile-overall-dimension" data-axis="${axis}">${trace([a,start,end,b],stroke)}`;
+  for(const p of [start,end])content+=trace([{x:p.x-3*unit,y:p.y+3*unit},{x:p.x+3*unit,y:p.y-3*unit}],stroke);
+  content+=caption((start.x+end.x)/2+(axis==='y'?14*unit:0),(start.y+end.y)/2-(axis==='x'?9*unit:0),`${axis==='x'?'Общая длина':'Общая ширина'} ${format(length)} мм`,axis==='y'?-90:0)+'</g>';
+ }
  return `<g class="pile-selection-dimensions" pointer-events="none" fill="none">${content}</g>`;
 }
 function floorReference(floor,color){
  const close=points=>trace([...points,points[0]]);
- let outlines=floor.slabs.map(slab=>close(slab.points)).join('')+(floor.structures||[]).map(e=>structureShape(e)).join('');
+ let outlines=floor.slabs.map(slab=>close(slab.points)).join('')+(floor.structures||[]).map(e=>structureShape(e,'',floor.structures)).join('');
  for(const wall of floor.walls){
   const frame=elementFrame(wall);
   for(const [start,end] of wallSegments(wall))outlines+=close([[start,0],[end,0],[end,frame.h],[start,frame.h]].map(([x,y])=>framePoint(frame,x,y)));
@@ -158,7 +161,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   content+='</g>';
  }
  for(const end of hidden)content+=`<g class="hidden-wall-end" data-hidden-wall="${esc(end.id)}" fill="none" stroke="${dark?'#e6e9f0':'#263751'}" stroke-dasharray="3 2" stroke-width="1.1" pointer-events="none">${end.strokes.map(points=>trace(points,'vector-effect="non-scaling-stroke"')).join('')}</g>`;
- for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
+ for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark,structures);
  for(const [id,contour] of floorTiltProjections(floor)){
   const stroke=selectedIds.has(id)?(dark?'#bfa6ff':'#6442ae'):(dark?'#a69ac2':'#786789');
   const outline=[...contour,contour[0]];
@@ -182,7 +185,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   const {a,b,offset}=dimensionDraft;
   content+=`<g class="dimension-preview" pointer-events="none" style="--plan-text:#2164ff;--plan-dimension:#2164ff">${dimension(a,b,offset)}${[a,b].map(p=>`<circle cx="${p.x}" cy="${p.y}" r="${3*unit}" fill="#2164ff"/>`).join('')}</g>`;
  }
- if(structurePreview)content+=structureShape(structurePreview,'fill="#2164ff" fill-opacity=".12" stroke="#2164ff" stroke-width="1.3" stroke-dasharray="5 3" vector-effect="non-scaling-stroke" pointer-events="none"');
+ if(structurePreview)content+=structureShape(structurePreview,'fill="#2164ff" fill-opacity=".12" stroke="#2164ff" stroke-width="1.3" stroke-dasharray="5 3" vector-effect="non-scaling-stroke" pointer-events="none"',structures);
  if(angleDraft?.length){
   const [vertex,a,b]=angleDraft;
   const mark=`<circle cx="${vertex.x}" cy="${vertex.y}" r=".05" fill="#2164ff"/>`;
@@ -209,7 +212,7 @@ export function planBounds(floor,referenceFloors=[]){
  for(const level of [floor,...referenceFloors]){
   for(const e of level.construction||[])points.push(...guidePoints(e));
   for(const contour of floorTiltProjections(level).values())points.push(...contour);
-  for(const e of level.structures||[])points.push(...elementFootprint(e));
+  for(const e of level.structures||[])points.push(...(e.type==='rim'?rimBoardSegments(e,level.structures).flatMap(board=>elementFootprint({...e,...board})):elementFootprint(e)));
   for(const wall of level.walls)points.push(wall.a,wall.b);for(const s of level.slabs)points.push(...s.points);
   for(const e of level.furniture){const angle=e.rotation*Math.PI/180;for(const [x,y] of [[0,0],[e.w,0],[e.w,e.d],[0,e.d]])points.push({x:e.x+x*Math.cos(angle)-y*Math.sin(angle),y:e.y+x*Math.sin(angle)+y*Math.cos(angle)});}
  }

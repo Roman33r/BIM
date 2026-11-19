@@ -38,11 +38,6 @@ export function selectedPileDimensions(floor,selectedIds){
  };
  // Connect the selected centers by their shortest links, so an array stays readable.
  const connected=new Set([0]),nearest=piles.map((p,i)=>({from:0,to:i,length:i?distance(piles[0],p):Infinity})),links=[];
- let farthest=null;
- for(let i=0;i<piles.length;i++)for(let j=i+1;j<piles.length;j++){
-  const length=distance(piles[i],piles[j]);
-  if(!farthest||length>farthest.length)farthest={a:piles[i],b:piles[j],length};
- }
  while(connected.size<piles.length){
   let next=null;
   for(const candidate of nearest)if(!connected.has(candidate.to)&&(!next||candidate.length<next.length))next=candidate;
@@ -54,12 +49,13 @@ export function selectedPileDimensions(floor,selectedIds){
    if(length<candidate.length){candidate.from=next.to;candidate.length=length;}
   }
  }
- if(!farthest||farthest.length<1e-7)return null;
- let {a,b}=farthest;
- if(a.x>b.x||a.x===b.x&&a.y>b.y)[a,b]=[b,a];
- const overall=describe(a,b),ux=(b.x-a.x)/overall.length,uy=(b.y-a.y)/overall.length;
- overall.a={x:a.x-ux*a.diameter/2,y:a.y-uy*a.diameter/2};
- overall.b={x:b.x+ux*b.diameter/2,y:b.y+uy*b.diameter/2};
- overall.length+=(a.diameter+b.diameter)/2;
+ if(!links.length)return null;
+ const minX=Math.min(...piles.map(p=>p.x-p.diameter/2)),maxX=Math.max(...piles.map(p=>p.x+p.diameter/2));
+ const minY=Math.min(...piles.map(p=>p.y-p.diameter/2)),maxY=Math.max(...piles.map(p=>p.y+p.diameter/2));
+ const overall=[];
+ if(Math.max(...piles.map(p=>p.x))-Math.min(...piles.map(p=>p.x))>1e-7)
+  overall.push({...describe({x:minX,y:minY},{x:maxX,y:minY}),axis:'x'});
+ if(Math.max(...piles.map(p=>p.y))-Math.min(...piles.map(p=>p.y))>1e-7)
+  overall.push({...describe({x:maxX,y:minY},{x:maxX,y:maxY}),axis:'y'});
  return {links,overall};
 }

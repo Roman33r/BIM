@@ -10,7 +10,7 @@ export const STRUCTURE_TYPES={
  channel:{kind:'framing',shape:'line',name:'Швеллер',icon:'channel',sizes:{thickness:.075,height:.2,gauge:.008,material:'Сталь'}},
  header:{kind:'framing',shape:'line',name:'Хидер (перемычка)',icon:'opening-beam',sizes:{thickness:.1,height:.2,material:'Дерево'}},
  ibeam:{kind:'framing',shape:'line',name:'Двутавр',icon:'ibeam',sizes:{thickness:.1,height:.2,gauge:.008,material:'Сталь'}},
- rim:{kind:'framing',shape:'line',name:'Обвязочная балка',icon:'beam',sizes:{thickness:.075,height:.225,material:'Дерево'}},
+ rim:{kind:'framing',shape:'line',name:'Обвязочная балка',icon:'beam',sizes:{thickness:.15,height:.2,material:'Дерево'}},
  blocking:{kind:'framing',shape:'line',name:'Распорка между лагами',icon:'beam',sizes:{thickness:.05,height:.15,material:'Дерево'}}
 };
 
@@ -76,10 +76,46 @@ export function screwBladeMesh(e){
 // from its bottom, with offsets referenced to the plan centerline.
 export function memberProfile(e){
  const {thickness:width,height,gauge}=e;
+ if(e.type==='rim')return Array.from({length:3},(_,i)=>({width:width/3,bottom:0,top:height,offset:(i-1)*width/3}));
  if(e.type!=='channel'&&e.type!=='ibeam')return [{width,bottom:0,top:height,offset:0}];
  return [
   {width,bottom:0,top:gauge,offset:0},
   {width,bottom:height-gauge,top:height,offset:0},
   {width:gauge,bottom:gauge,top:height-gauge,offset:e.type==='channel'?-(width-gauge)/2:0}
  ];
+}
+
+// The editable segment follows the package centerline. At perpendicular corners,
+// stagger the board ends so the two packages meet without occupying the same volume.
+export function rimBoardSegments(e,members=[]){
+ const length=Math.hypot(e.b.x-e.a.x,e.b.y-e.a.y);
+ if(length<1e-8)return [];
+ const ux=(e.b.x-e.a.x)/length,uy=(e.b.y-e.a.y)/length;
+ const others=members.filter(other=>other.type==='rim'&&other.id!==e.id);
+ const direction=(a,b)=>{const d=Math.hypot(b.x-a.x,b.y-a.y);return {x:(b.x-a.x)/d,y:(b.y-a.y)/d,length:d};};
+ const orientation=v=>(Math.atan2(v.y,v.x)+Math.PI)%Math.PI;
+ const cutAt=(point,index)=>{
+  const corners=[],tees=[];
+  for(const other of others){
+   const dir=direction(other.a,other.b);
+   if(length<=2*other.thickness||Math.abs(ux*dir.x+uy*dir.y)>1e-6)continue;
+   const endpoint=[other.a,other.b].find(p=>Math.hypot(p.x-point.x,p.y-point.y)<1e-6);
+   if(endpoint){
+    const away=direction(endpoint,endpoint===other.a?other.b:other.a);
+    const row=(-uy*away.x+ux*away.y)>0?index:2-index;
+    const owner=orientation({x:ux,y:uy})<orientation(away);
+    corners.push(-other.thickness/2+(row+(owner?0:1))*other.thickness/3);
+   }else{
+    const along=(point.x-other.a.x)*dir.x+(point.y-other.a.y)*dir.y;
+    const across=(point.x-other.a.x)*dir.y-(point.y-other.a.y)*dir.x;
+    if(along>1e-6&&along<dir.length-1e-6&&Math.abs(across)<1e-6)tees.push(other.thickness/2);
+   }
+  }
+  return corners.length===1?corners[0]:!corners.length&&tees.length===1?tees[0]:0;
+ };
+ return memberProfile(e).map((profile,i)=>{
+  const start=cutAt(e.a,i),end=length-cutAt(e.b,i),offset=profile.offset;
+  const point=t=>({x:e.a.x+ux*t-uy*offset,y:e.a.y+uy*t+ux*offset});
+  return {a:point(start),b:point(end),thickness:profile.width,bottom:profile.bottom,top:profile.top};
+ });
 }

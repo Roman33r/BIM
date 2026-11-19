@@ -7,7 +7,7 @@ import {icon} from './icons.js';
 import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
-import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
+import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,rimBoardSegments,screwBladeMesh,screwTipHeight} from './structures.js';
 import {elementTilts} from './spatial.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
@@ -36,7 +36,8 @@ export function createScene(container,onSelect,gestures={}){
  const plainGlass=new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:.35,roughness:.2});
  const apertureHit=new THREE.MeshBasicMaterial({visible:false});
  const apertureOutline=new THREE.LineBasicMaterial({color:0x2164ff});
- const textures=new Map(),surfaceMaterials=new Map(),sharedMaterials=new Set([selectedMat,frame,glass,plain,plainGlass,apertureHit,apertureOutline]);
+ const woodSeams=new THREE.LineBasicMaterial({color:0x735639}),plainSeams=new THREE.LineBasicMaterial({color:0x687787});
+ const textures=new Map(),surfaceMaterials=new Map(),sharedMaterials=new Set([selectedMat,frame,glass,plain,plainGlass,apertureHit,apertureOutline,woodSeams,plainSeams]);
  function material(name,selected,textured){
   if(!textured)return selected?selectedMat:plain;
   const spec=materialSpec(name),key=spec.id+(selected?'-selected':'');
@@ -112,9 +113,14 @@ export function createScene(container,onSelect,gestures={}){
   blade.setIndex(indices);blade.computeVertexNormals();
   addPileMesh(blade,bottom);
  }
- function buildStructure(layer,e,selected,textured){
+ function buildStructure(layer,e,selected,textured,members=[]){
   const shape=STRUCTURE_TYPES[e.type].shape,mat=material(e.material,selected,textured),bottom=e.elevation-e.height;
-  if(shape==='line'){
+  if(e.type==='rim'){
+   for(const board of rimBoardSegments(e,members)){
+    const mesh=localBox(layer,board,0,wallLength(board),bottom+board.bottom,bottom+board.top,mat,e.id,board.thickness);
+    if(mesh)mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry),selected?apertureOutline:textured?woodSeams:plainSeams));
+   }
+  }else if(shape==='line'){
    const length=wallLength(e);
    for(const profile of memberProfile(e)){
     localBox(layer,e,0,length,bottom+profile.bottom,bottom+profile.top,mat,e.id,profile.width,profile.offset);
@@ -145,7 +151,7 @@ export function createScene(container,onSelect,gestures={}){
   const heightLimit=1.15,textured=opts.textures!==false;
   for(const slab of floor.slabs)extrudedPlate(tiltedLayer(layer,slab),slab.points,slab.thickness,0,material(slab.material,ids.has(slab.id),textured),slab.id);
   const structures=floor.structures||[],structuresById=new Map(structures.map(e=>[e.id,e]));
-  for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured);
+  for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured,structures);
 
   for(const wall of floor.walls){
    const mat=material(wall.material,ids.has(wall.id),textured),h=section?Math.min(wall.height,heightLimit):wall.height;
@@ -232,8 +238,12 @@ export function createScene(container,onSelect,gestures={}){
     overlays.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff,depthTest:false})));
     if(pileSizes.links.length<=40)label(activeGroup,`${Math.round(length*1000)} мм · ${Math.round(angle*10)/10}°`,(a.x+b.x)/2,.15,(a.y+b.y)/2,'',true);
    }
-   const {a,b,length}=pileSizes.overall;
-   label(activeGroup,'Общий '+Math.round(length*1000)+' мм',(a.x+b.x)/2,.45,(a.y+b.y)/2,'',true);
+   for(const {a,b,length,axis} of pileSizes.overall){
+    const start={x:a.x+(axis==='y'?.45:0),y:a.y-(axis==='x'?.45:0)},end={x:b.x+(axis==='y'?.45:0),y:b.y-(axis==='x'?.45:0)};
+    const points=[a,start,end,b].map(p=>toScene(p,.02));
+    overlays.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff,depthTest:false})));
+    label(activeGroup,`${axis==='x'?'Общая длина':'Общая ширина'} ${Math.round(length*1000)} мм`,(start.x+end.x)/2,.3,(start.y+end.y)/2,'',true);
+   }
   }
   rotationTarget=selected&&!selected.host&&elementVisible(selected.element,opts)&&opts.interactive!==false?selected.element:null;
   function guideLine(a,b,color){

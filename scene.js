@@ -10,6 +10,7 @@ import {createMaterialTexture,materialSpec} from './materials.js';
 import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
 import {elementTilts} from './spatial.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
+import {selectedPileDimensions} from './pile-layout.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -224,6 +225,16 @@ export function createScene(container,onSelect,gestures={}){
    buildLevel(layer,level,active?ids:empty,opts,active);
   }
   const selected=ids.size===1?findElement(floor,ids.values().next().value):null;
+  const pileSizes=opts.dimensions!==false&&opts.interactive!==false?selectedPileDimensions(floor,ids):null;
+  if(pileSizes){
+   for(const {a,b,length,angle} of pileSizes.links){
+    const points=[a,b].map(p=>toScene(p,.02));
+    overlays.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff,depthTest:false})));
+    if(pileSizes.links.length<=40)label(activeGroup,`${Math.round(length*1000)} мм · ${Math.round(angle*10)/10}°`,(a.x+b.x)/2,.15,(a.y+b.y)/2,'',true);
+   }
+   const {a,b,length}=pileSizes.overall;
+   label(activeGroup,'Общий '+Math.round(length*1000)+' мм',(a.x+b.x)/2,.45,(a.y+b.y)/2,'',true);
+  }
   rotationTarget=selected&&!selected.host&&elementVisible(selected.element,opts)&&opts.interactive!==false?selected.element:null;
   function guideLine(a,b,color){
    const geometry=new THREE.BufferGeometry().setFromPoints([toScene(a),toScene(b)]);

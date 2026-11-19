@@ -42,10 +42,12 @@ jobs:
           node --check measurements.js
           node --check spatial.js
           node --check construction-guides.js
+          node --check pile-layout.js
+          node --check grid.js
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js measurements.js spatial.js construction-guides.js .nojekyll _site/
+          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js measurements.js spatial.js construction-guides.js pile-layout.js grid.js .nojekyll _site/
           cp -r assets vendor _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

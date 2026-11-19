@@ -1,5 +1,6 @@
 import {openingSpan,wallLength,wallSegments} from './model.js';
 import {furniturePlan} from './furniture-plan.js';
+import {visibleFloor} from './visibility.js';
 import {renderHoleXray} from './hole-display.js';
 import {componentHoles,solidBodies,pointInside} from './assembly.js';
 import {verticalRange} from './vertical.js';
@@ -85,10 +86,10 @@ function structurePlan(element,selected,fill,dark,members=[]){
  if(isFastener(element)){
   const {x,y}=element,r=element.headDiameter*.28,angle=(element.rotation||0)*Math.PI/180;
   if(fastenerFamily(element)==='screw')geometry+=trace([{x:x-r*Math.cos(angle),y:y-r*Math.sin(angle)},{x:x+r*Math.cos(angle),y:y+r*Math.sin(angle)}],`stroke="${stroke}" stroke-width=".0008"`)+trace([{x:x+r*Math.sin(angle),y:y-r*Math.cos(angle)},{x:x-r*Math.sin(angle),y:y+r*Math.cos(angle)}],`stroke="${stroke}" stroke-width=".0008"`);
-  geometry+=`<circle cx="${x}" cy="${y}" r="${element.headDiameter/2}" fill="transparent" stroke="transparent" stroke-width="8" vector-effect="non-scaling-stroke"/>`;
+  geometry+=`<circle cx="${x}" cy="${y}" r="${element.headDiameter/2}" fill="transparent" stroke="transparent" stroke-width="0" vector-effect="non-scaling-stroke"/>`;
  }
  if(element.a&&element.thickness<.15){
-  geometry+=trace([element.a,element.b],'stroke="transparent" fill="none" stroke-width="9" vector-effect="non-scaling-stroke"');
+  geometry+=trace([element.a,element.b],'stroke="transparent" fill="none" stroke-width="2" vector-effect="non-scaling-stroke"');
  }
  return `<g data-element="${esc(element.id)}" data-structure-type="${element.type}" class="movable-element">${geometry}</g>`;
 }
@@ -157,6 +158,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   <pattern id="grid-minor" width="${visualCell}" height="${visualCell}" patternUnits="userSpaceOnUse"><path d="M${visualCell} 0H0V${visualCell}" fill="none" stroke="${minorColor}" stroke-width=".65" vector-effect="non-scaling-stroke"/></pattern>
   <pattern id="grid-major" width="${major}" height="${major}" patternUnits="userSpaceOnUse"><rect width="${major}" height="${major}" fill="url(#grid-minor)"/><path d="M${major} 0H0V${major}" fill="none" stroke="${majorColor}" stroke-width="1.15" vector-effect="non-scaling-stroke"/></pattern>
   ${tilePattern}</defs>`;
+ floor=visibleFloor(floor);referenceFloors=referenceFloors.map(visibleFloor);
  const surfaceFill=material=>textures?`url(#material-${materialSpec(material).id})`:'#fff';
  let content=grid?rect(-10000,-10000,20000,20000,'fill="url(#grid-major)"'):'';
  for(const slab of floor.slabs){const attrs=`fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"`;content+=slab.drillHoles?.length?structureShape(slab,attrs,floor.structures):`<polygon points="${coords(slab.points)}" ${attrs}/>`;}
@@ -171,7 +173,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  for(const [index,wall] of floor.walls.entries()){
   const l=wallLength(wall),angle=Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x)*180/Math.PI,selected=selectedIds.has(wall.id);
   content+=`<g transform="translate(${wall.a.x} ${wall.a.y}) rotate(${angle})" data-element="${esc(wall.id)}" class="movable-element">`;
-  content+=rect(0,-Math.max(.15,wall.thickness/2),l,Math.max(.3,wall.thickness),'fill="transparent" stroke="none"');
+
   const segments=wallSegments(wall),fill=surfaceFill(wall.material);
   const segmentRects=attrs=>segments.map(([start,end])=>rect(start,-wall.thickness/2,end-start,wall.thickness,attrs)).join('');
   content+=segmentRects(`fill="${fill}"`);
@@ -183,7 +185,8 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
    content+=`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-.1" y="${-wall.thickness}" width="${l+.2}" height="${2*wall.thickness}">${rect(-.1,-wall.thickness,l+.2,2*wall.thickness,'fill="white"')}${covered.map(points=>trace(points.map(local),'stroke="black" stroke-width=".06"')).join('')}</mask><g mask="url(#${mask})">${segmentRects(stroke)}</g>`;
   }else content+=segmentRects(stroke);
   for(const o of wall.openings){
-   const [x]=openingSpan(o),sel=selectedIds.has(o.id),hitHeight=Math.max(.3,wall.thickness);
+   if(o.hidden)continue;
+   const [x]=openingSpan(o),sel=selectedIds.has(o.id),hitHeight=wall.thickness;
    content+=`<g data-element="${esc(o.id)}" data-opening-kind="${o.kind}" stroke="${sel?'#2164ff':'var(--furniture-stroke)'}" stroke-width="${sel?.035:.016}" fill="none">${rect(x,-hitHeight/2,o.width,hitHeight,'fill="transparent" stroke="none"')}`;
    if(o.kind==='window')content+=path(`M${n(x)} -.045h${n(o.width)}M${n(x)} .045h${n(o.width)}`);
    if(o.kind==='door')content+=path(`M${n(x)} 0v${n(o.width)}M${n(x)} ${n(o.width)}A${n(o.width)} ${n(o.width)} 0 0 0 ${n(x+o.width)} 0`);
@@ -193,7 +196,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   content+='</g>';
  }
  for(const end of hidden)content+=`<g class="hidden-wall-end" data-hidden-wall="${esc(end.id)}" fill="none" stroke="${dark?'#e6e9f0':'#263751'}" stroke-dasharray="3 2" stroke-width="1.1" pointer-events="none">${end.strokes.map(points=>trace(points,'vector-effect="non-scaling-stroke"')).join('')}</g>`;
- for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark,structures);
+ for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark,floor.sourceStructures||structures);
  for(const e of structures)if(isFastener(e))content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
  for(const [id,contour] of floorTiltProjections(floor)){
   const stroke=selectedIds.has(id)?(dark?'#bfa6ff':'#6442ae'):(dark?'#a69ac2':'#786789');
@@ -242,6 +245,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  return {content:defs+`<g style="${Object.entries(colors).map(([k,v])=>k+':'+v).join(';')}" font-family="Segoe UI,Arial,sans-serif">${content}</g>`};
 }
 export function planBounds(floor,referenceFloors=[]){
+ floor=visibleFloor(floor);referenceFloors=referenceFloors.map(visibleFloor);
  const points=[];
  for(const level of [floor,...referenceFloors]){
   for(const e of level.construction||[])points.push(...guidePoints(e));

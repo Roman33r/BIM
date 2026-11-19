@@ -1,4 +1,5 @@
 import {elementFrame, elementFootprint, add, mul} from './transforms.js';
+import {isElementShown} from './visibility.js';
 import {angleGeometry} from './annotations.js';
 import {FLOOR_COLLECTIONS} from './elements.js';
 import {floorTiltProjections} from './spatial.js';
@@ -10,17 +11,18 @@ export const AXIS_TYPES = Object.freeze({
 
 export function* floorElements(floor) {
  for (const wall of floor.walls) {
+  if(!isElementShown(floor,wall))continue;
   yield {element:wall};
-  for (const element of wall.openings) yield {element, host:wall};
+  for (const element of wall.openings)if(isElementShown(floor,element,wall))yield {element, host:wall};
  }
  for (const collection of FLOOR_COLLECTIONS.slice(1)) {
-  for (const element of floor[collection]||[]) yield {element};
+  for (const element of floor[collection]||[])if(isElementShown(floor,element))yield {element};
  }
 }
 export function extendSelection(event){return event.ctrlKey||event.metaKey||event.shiftKey;}
 
 export function elementVisible(element, options) {
- return (element.kind !== 'room' || options.labels !== false)
+ return !element.hidden && (element.kind !== 'room' || options.labels !== false)
   && (element.kind !== 'dimension' || options.dimensions !== false);
 }
 

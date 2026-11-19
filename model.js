@@ -6,6 +6,7 @@ import {isFastener,validateCapHoles} from './hardware.js';
 import {canTiltElement,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
 import {syncPartFixings} from './assembly.js';
+import {validateVisibility} from './visibility.js';
 import {syncBoardMounts} from './board-mounts.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
@@ -124,11 +125,13 @@ export function validateProject(value){
    else if(e.type!=='line'||!point(e.a)||!point(e.b)||!num(wallLength(e),.01,3000)
     ||!Object.hasOwn(GUIDE_STYLES,e.style)||!Number.isInteger(e.divisions)||!num(e.divisions,1,100))fail();
   }
+  validateVisibility(f);
   for(const e of listElements(f)){
    if(e.baseElevation!==undefined&&!num(e.baseElevation,-100,100))fail();
    if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
    for(const key of tiltFields)if(e[key]!==undefined&&(!canTiltElement(e)||!num(e[key],-180,180)))fail();
   }
  }
+ if(value.estimatePrices!==undefined&&(!value.estimatePrices||typeof value.estimatePrices!=='object'||Array.isArray(value.estimatePrices)||Object.keys(value.estimatePrices).length>10000||Object.values(value.estimatePrices).some(v=>typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e9)))throw new Error('Некорректные цены сметы.');
  return value;
 }

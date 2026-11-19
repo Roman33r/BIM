@@ -1,3 +1,4 @@
+import {visibleFloor} from './visibility.js';
 import {projectedElements,projectView,projectedElementAxes} from './views.js';
 import {elementAnchors} from './transforms.js';
 import {verticalRange} from './vertical.js';
@@ -7,6 +8,7 @@ import {guidePoints} from './construction-guides.js';
 import {findElement,elementPosition} from './elements.js';
 
 export function viewSnapTargets(floor,view,excludedIds=[],options={}){
+ floor=visibleFloor(floor);
  const excluded=new Set(excludedIds);
  if(view==='top'||view==='bottom'){
   const targets=snapTargets(floor,excludedIds,options.axes,options),point=p=>({...p,...projectView({...p,z:floor.elevation},view)});
@@ -21,7 +23,7 @@ export function viewSnapTargets(floor,view,excludedIds=[],options={}){
    const p=part[i],q=part[(i+1)%part.length];own.push({...p,id:e.id,role:'Угол'},{x:(p.x+q.x)/2,y:(p.y+q.y)/2,id:e.id,role:'Середина'});
   }
   if(!own.length)continue;
-  const [bottom,top]=verticalRange(e,host),support=host||(e.type==='pileCap'?floor.structures.find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support);
+  const [bottom,top]=verticalRange(e,host),support=host||(e.type==='pileCap'?(floor.sourceStructures||floor.structures).find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support);
   const project=(p,z)=>{const world=applyElementTilts({...p,z},tilts);return projectView({...world,z:world.z+floor.elevation},view);};
   for(const p of elementAnchors(e,host))for(const z of [bottom,(bottom+top)/2,top])own.push({...project(p,z),id:e.id,role:p.role});
   const xs=own.map(p=>p.x),ys=own.map(p=>p.y),center={x:(Math.min(...xs)+Math.max(...xs))/2,y:(Math.min(...ys)+Math.max(...ys))/2};

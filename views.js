@@ -1,3 +1,4 @@
+import {visibleFloor} from './visibility.js';
 import {elementFootprint,elementFrame} from './transforms.js';
 import {elementTilts,applyElementTilts,convexOutline} from './spatial.js';
 import {verticalRange,canMoveVertical} from './vertical.js';
@@ -49,7 +50,7 @@ export function cameraStep(keys,angle,delta,speed){
  return {x:(-Math.sin(angle)*forward+Math.cos(angle)*right)*factor,y:up*factor,z:(-Math.cos(angle)*forward-Math.sin(angle)*right)*factor};
 }
 export function projectedElementAxes(floor,e,view,host){
- const [bottom,top]=verticalRange(e,host),support=host||(e.type==='pileCap'?floor.structures.find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),frame=elementFrame(e,host),mid=(bottom+top)/2;
+ const [bottom,top]=verticalRange(e,host),support=host||(e.type==='pileCap'?(floor.sourceStructures||floor.structures).find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),frame=elementFrame(e,host),mid=(bottom+top)/2;
  const project=(p,z)=>{const world=applyElementTilts({...p,z},tilts);return projectView({...world,z:world.z+floor.elevation},view);},center=project(frame.center,mid),axes=[];
  for(const [p,z,extent] of [[{x:frame.center.x+frame.u.x,y:frame.center.y+frame.u.y},mid,frame.w/2+.3],[{x:frame.center.x+frame.v.x,y:frame.center.y+frame.v.y},mid,frame.h/2+.3],[frame.center,mid+1,(top-bottom)/2+.3]]){
   const end=project(p,z),dx=end.x-center.x,dy=end.y-center.y,length=Math.hypot(dx,dy);
@@ -58,10 +59,11 @@ export function projectedElementAxes(floor,e,view,host){
  return axes;
 }
 export function projectedElements(floor,view){
+ floor=visibleFloor(floor);
  const members=floor.structures||[],items=[...floor.walls,...floor.slabs,...floor.furniture,...members].map(element=>({element}));
  for(const wall of floor.walls)for(const element of wall.openings)items.push({element,host:wall});
- return items.filter(({element})=>canMoveVertical(element)).map(({element:e,host})=>{
-  const support=host||(isPileCap(e)?members.find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),parts=[];
+ return items.filter(({element})=>!element.hidden&&canMoveVertical(element)).map(({element:e,host})=>{
+  const support=host||(isPileCap(e)?(floor.sourceStructures||members).find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),parts=[];
   const add=(footprint,bottom,top)=>parts.push(convexOutline(footprint.flatMap(p=>[bottom,top].map(z=>{
    const tilted=applyElementTilts({...p,z},tilts);return projectView({...tilted,z:tilted.z+floor.elevation},view);
   }))));
@@ -76,7 +78,7 @@ export function projectedElements(floor,view){
    const circle=diameter=>Array.from({length:24},(_,i)=>({x:e.x+diameter/2*Math.cos(i*Math.PI/12),y:e.y+diameter/2*Math.sin(i*Math.PI/12)}));
    if(isRingFastener(e))add(circle(e.headDiameter),bottom,top);
    else{add(circle(e.diameter),bottom,e.elevation);add(circle(e.headDiameter),e.elevation,top);}
-  }else if(e.type==='rim')for(const board of rimBoardSegments(e,members))add(elementFootprint({...e,...board}),bottom,top);
+  }else if(e.type==='rim')for(const board of rimBoardSegments(e,floor.sourceStructures||members))add(elementFootprint({...e,...board}),bottom,top);
   else if(isRoundStructure(e)){
    const circle=(diameter)=>Array.from({length:24},(_,i)=>({x:e.x+diameter/2*Math.cos(i*Math.PI/12),y:e.y+diameter/2*Math.sin(i*Math.PI/12)}));
    add(circle(e.diameter),bottom,top);
@@ -93,12 +95,13 @@ export function orthographicBounds(floors,view){
 }
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,dark=false,grid=true,gridStep=.25,textures=true,holeXray=false,feedback={},bounds={x:-100,y:-100,w:200,h:200},axes=false,axisTypes}={}){
+ floors=floors.map(visibleFloor);
  let svg=`<defs><pattern id="elevation-grid" width="${gridStep}" height="${gridStep}" patternUnits="userSpaceOnUse"><path d="M${gridStep} 0H0V${gridStep}" stroke="${dark?'#405064':'#cdd5e0'}" fill="none" stroke-width=".7" vector-effect="non-scaling-stroke"/></pattern></defs>`;
  if(grid)svg+='<rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#elevation-grid)"/>';
  for(const floor of floors)for(const {element:e,parts} of projectedElements(floor,view)){
   const selected=selectedIds.has(e.id),spec=materialSpec(e.material||'Дерево'),fill=selected?'#9cbaff':textures?(dark?spec.dark:spec.base):'#fff';
   const attrs=`fill="${fill}" stroke="${selected?'#2164ff':dark?'#bbc8d9':'#667282'}" stroke-width="${selected?2:1}" vector-effect="non-scaling-stroke"`;
-  const holes=view==='bottom'?(isPileCap(e)?capHoles(e):e.drillHoles?.length||e.type==='rimBoard'?componentHoles(e,floor.structures).filter(h=>Math.abs(h.bottom-verticalRange(e)[0])<1e-6):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2}]:[]):[];
+  const holes=view==='bottom'?(isPileCap(e)?capHoles(e):e.drillHoles?.length||e.type==='rimBoard'?componentHoles(e,floor.sourceStructures||floor.structures).filter(h=>Math.abs(h.bottom-verticalRange(e)[0])<1e-6):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2}]:[]):[];
   const voids=points=>holes.filter(p=>pointInside({x:p.x,y:-p.y},points,p.radius*.999)).map(p=>`M${p.x+p.radius} ${-p.y}a${p.radius} ${p.radius} 0 1 0 ${-2*p.radius} 0a${p.radius} ${p.radius} 0 1 0 ${2*p.radius} 0Z`).join('');
   svg+=`<g data-element="${esc(e.id)}" class="orthographic-element" data-kind="${e.kind}">${parts.map(points=>holes.length?`<path d="M${points.map(p=>`${p.x} ${p.y}`).join('L')}Z${voids(points)}" fill-rule="evenodd" ${attrs}/>`:`<polygon points="${points.map(p=>`${p.x},${p.y}`).join(' ')}" ${attrs}/>`).join('')}</g>`;
  }

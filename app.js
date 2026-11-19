@@ -21,6 +21,9 @@ import {VIEW_PRESETS,renderOrthographic,orthographicBounds,selectOrthographic,vi
 import {viewSnapSet,snapViewTranslation} from './view-snapping.js';
 import {createViewCube} from './view-cube.js';
 import {autoPlaceOnSurface,seatOnSurface,canSurfacePlace,canFixPart,partCapContacts,createPartFixings,distributeDrilling} from './assembly.js';
+import {commonProperties,applyBulkProperty} from './bulk-properties.js';
+import {ELEMENT_GROUPS,isElementShown,setGroupVisibility,visibleFloor} from './visibility.js';
+import {buildEstimate,estimateCSV} from './estimate.js';
 import {rimBoardSegments} from './structures.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
@@ -39,6 +42,7 @@ let inspectorTab='geometry';
 let planDirection='top',verticalMode=false;
 let sceneDirection='orbit',planCube,sceneCube;
 let boardBindingTarget=null,boardBindingMounts=[];
+const treeOpen=new Set(),treeSeen=new Set();
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
 let cursorPoint={x:0,y:0};
@@ -264,9 +268,13 @@ function positionProperties(e,host){
 function renderGroupInspector(node){
  const items=[...selectedIds].map(id=>findElement(floor(),id)).filter(Boolean);
  const transferable=items.some(item=>!item.host);
+ const fields=commonProperties(items);
  const allHaveMaterial=items.every(item=>typeof item.element.material==='string');
  const materials=[...new Set(items.map(item=>item.element.material))];
- node.innerHTML=`<div class="empty-selection"><i data-icon="cursor"></i><h2>Выбрано объектов: ${items.length}</h2><p>Перетащите любой выбранный объект, чтобы переместить всё выделение.</p></div>
+ node.innerHTML=`<div class="group-selection-header"><i data-icon="cursor"></i><h2>Выбрано объектов: ${items.length}</h2><p>Перетащите любой выбранный объект, чтобы переместить всё выделение.</p></div>
+ <section class="property-section group-fields"><h2 class="section-heading">Общие параметры</h2><p class="property-note">«Разные» означает разные значения. Изменённое поле применяется ко всем выделенным объектам.</p>
+ ${fields.map(f=>`<div class="property-row"><label for="group-${f.key}">${escapeHTML(f.label)}</label>${f.key==='holeCount'?`<select id="group-${f.key}" data-group-property="${f.key}">${f.value===null?'<option value="" selected disabled>Разные</option>':''}${[0,2,4,8].map(n=>`<option value="${n}" ${n===f.value?'selected':''}>${n}</option>`).join('')}</select>`:`<div class="input-unit"><input id="group-${f.key}" aria-label="${escapeHTML(f.label)} группы" type="number" step="any" data-group-property="${f.key}" value="${f.value===null?'':Number(f.value.toFixed(2))}" placeholder="Разные"><span>${f.unit}</span></div>`}</div>`).join('')}
+ </section><section class="property-section"><h2 class="section-heading">Сдвиг всей группы</h2>${[['dx','X'],['dy','Y'],['dz','Z']].filter(([key])=>key!=='dz'||items.every(i=>canMoveVertical(i.element))).map(([key,label])=>`<div class="property-row"><label for="group-${key}">По ${label}</label><div class="input-unit"><input id="group-${key}" aria-label="Сдвиг группы по ${label}" type="number" step="1" data-group-property="${key}" value="0"><span>мм</span></div></div>`).join('')}<p class="property-note">Сдвиг сохраняет расстояния между объектами. Углы выше задают поворот каждой детали.</p></section>
  <section class="property-section group-actions">
   <button type="button" class="button" id="group-copy"><i data-icon="copy"></i>Дублировать</button>
   <button type="button" class="button" id="group-delete"><i data-icon="trash"></i>Удалить</button>
@@ -277,6 +285,10 @@ function renderGroupInspector(node){
    </select></div>`:''}
   ${items.some(item=>item.host&&!selectedIds.has(item.host.id))?'<p class="property-note">Проёмы переносятся между этажами вместе со стенами.</p>':''}
  </section>`;
+ node.querySelectorAll('[data-group-property]').forEach(input=>{
+  const apply=()=>{if(!input.isConnected||input.value.trim()==='')return;const key=input.dataset.groupProperty,scale=fields.find(f=>f.key===key)?.scale||1000,value=Number(input.value)/scale;mutate(()=>applyBulkProperty(floor(),selectedIds,key,value),'Свойства выделенных объектов изменены');};
+  input.onchange=apply;input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();apply();}};
+ });
  $('group-copy').onclick=copySelected;$('group-delete').onclick=removeSelected;
  if($('group-floor'))$('group-floor').onchange=event=>transferSelection(event.target.value);
  if($('group-material'))$('group-material').onchange=event=>{
@@ -591,7 +603,7 @@ function selectOrAddCap(pile){
 }
 function nearestCapHole(point){
  let nearest=null,distance=pixelUnit()*10;
- for(const cap of floor().structures.filter(isPileCap))for(const hole of capHoles(cap)){
+ for(const cap of floor().structures.filter(e=>isPileCap(e)&&isElementShown(floor(),e)))for(const hole of capHoles(cap)){
   const current=length(sub(point,hole));
   if(current<distance){distance=current;nearest={point:hole,cap};}
  }
@@ -682,7 +694,39 @@ function copySelected(){
  },'Копии созданы');
 }
 function elementIcon(e){return e.kind==='guide'?(e.type==='point'?'axis':'align'):isStructure(e)?STRUCTURE_TYPES[e.type].icon:e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
-function renderElementList(){const list=$('elements-list');if(!list)return;const previousScroll=list.scrollTop;list.replaceChildren();const all=listElements(floor());$('elements-count').textContent=all.length;for(const e of all){const button=document.createElement('button');button.className='element-list-item'+(selectedIds.has(e.id)?' active':'');button.setAttribute('aria-pressed',String(selectedIds.has(e.id)));button.dataset.elementId=e.id;button.innerHTML=`<i data-icon="${elementIcon(e)}"></i><span></span>`;button.querySelector('span').textContent=e.name;button.title=e.name+' · '+e.id;button.onclick=event=>{setTool('select');select(e.id,extendSelection(event));};list.append(button);}if(!all.length){const note=document.createElement('p');note.className='empty-elements';note.textContent='Пока нет элементов. Начните со стены.';list.append(note);}hydrateIcons(list);list.scrollTop=previousScroll;}
+function renderElementList(){
+ const list=$('elements-list');if(!list)return;const scroll=list.scrollTop;let html='';
+ $('elements-count').textContent=project.floors.reduce((n,f)=>n+listElements(f).length,0);
+ const eye=(scope,id,shown,label,kind='')=>`<button type="button" class="tree-eye ${shown?'':'is-hidden'}" data-visibility="${scope}" data-level="${escapeHTML(id)}" ${kind?`data-kind="${escapeHTML(kind)}"`:''} aria-label="${shown?'Скрыть':'Показать'} ${escapeHTML(label)}" title="${shown?'Скрыть':'Показать'} ${escapeHTML(label)}" aria-pressed="${shown}"><i data-icon="${shown?'eye':'eye-off'}"></i></button>`;
+ for(const level of floorsByElevation()){
+  const all=listElements(level),key='floor:'+level.id;if(!treeSeen.has(key)){treeSeen.add(key);if(level.id===floorId)treeOpen.add(key);}
+  html+=`<details class="element-tree-floor" data-tree="${escapeHTML(key)}" ${treeOpen.has(key)?'open':''}><summary><span class="tree-node-label">${escapeHTML(level.name)}</span><small>${all.length}</small>${eye('floor',level.id,!level.hidden,level.name)}</summary>`;
+  for(const [kind,label] of Object.entries(ELEMENT_GROUPS)){
+   const elements=all.filter(e=>e.kind===kind);if(!elements.length)continue;
+   const groupKey=level.id+':'+kind,shown=!level.hidden&&!level.hiddenKinds?.includes(kind);
+   html+=`<details class="element-tree-kind" data-tree="${escapeHTML(groupKey)}" ${treeOpen.has(groupKey)?'open':''}><summary><span class="tree-node-label">${label}</span><button type="button" class="tree-select-kind" data-select-kind="${kind}" data-level="${escapeHTML(level.id)}" aria-label="Выделить все: ${label}, ${escapeHTML(level.name)}" title="Выделить все элементы группы">${elements.length}</button>${eye('kind',level.id,shown,label,kind)}</summary>`;
+   for(const e of elements){const host=level.walls.find(w=>w.openings.some(o=>o.id===e.id)),visible=isElementShown(level,e,host);
+    html+=`<div class="tree-element-row ${visible?'':'is-hidden'}"><button type="button" class="element-list-item ${level.id===floorId&&selectedIds.has(e.id)?'active':''}" data-element-id="${escapeHTML(e.id)}" data-element-floor="${escapeHTML(level.id)}" aria-pressed="${level.id===floorId&&selectedIds.has(e.id)}" ${visible?'':'disabled'} title="${escapeHTML(e.name+' · '+e.id)}"><i data-icon="${elementIcon(e)}"></i><span>${escapeHTML(e.name)}</span></button>${eye('element',level.id,visible,e.name,e.id)}</div>`;
+   }
+   html+='</details>';
+  }
+  if(!all.length)html+='<p class="empty-elements">Пока нет элементов.</p>';
+  html+='</details>';
+ }
+ list.innerHTML=html;hydrateIcons(list);list.scrollTop=scroll;
+ list.querySelectorAll('details').forEach(node=>node.ontoggle=()=>{if(!node.isConnected)return;node.open?treeOpen.add(node.dataset.tree):treeOpen.delete(node.dataset.tree);});
+ list.querySelectorAll('[data-element-id]').forEach(button=>button.onclick=event=>{if(button.dataset.elementFloor!==floorId)chooseFloor(button.dataset.elementFloor);setTool('select');select(button.dataset.elementId,extendSelection(event));});
+ list.querySelectorAll('[data-select-kind]').forEach(button=>button.onclick=event=>{event.preventDefault();event.stopPropagation();const level=project.floors.find(f=>f.id===button.dataset.level);if(level.id!==floorId)chooseFloor(level.id);setTool('select');selectMany(listElements(level).filter(e=>e.kind===button.dataset.selectKind&&isElementShown(level,e,findElement(level,e.id)?.host)).map(e=>e.id));});
+ list.querySelectorAll('[data-visibility]').forEach(button=>button.onclick=event=>{
+  event.preventDefault();event.stopPropagation();const level=project.floors.find(f=>f.id===button.dataset.level),scope=button.dataset.visibility;
+  mutate(()=>{
+   if(scope==='floor')level.hidden=!level.hidden;
+   else if(scope==='kind'){const show=button.getAttribute('aria-pressed')!=='true';if(show)level.hidden=false;setGroupVisibility(level,button.dataset.kind,show);}
+   else{const item=findElement(level,button.dataset.kind),e=item.element,show=button.getAttribute('aria-pressed')!=='true';e.hidden=!show;if(show){level.hidden=false;setGroupVisibility(level,e.kind,true);if(item.host){item.host.hidden=false;setGroupVisibility(level,'wall',true);}}}
+   setSelection([...selectedIds].filter(id=>{const item=findElement(floor(),id);return item&&isElementShown(floor(),item.element,item.host);}));
+  },'Видимость изменена');
+ });
+}
 function beginElementDrag(id,point,handle=null){
  if(!findElement(floor(),id))return;
  if(!selectedIds.has(id))select(id);
@@ -752,7 +796,7 @@ function previewElementDrag(point,shift=false,disableSnap=false,unit=pixelUnit()
    if(shift){if(Math.abs(dx)>Math.abs(dy))dy=0;else dx=0;}
    if(preferences.snap&&!disableSnap){
     const wallSnap=original.element.kind==='wall'&&preferences.guides&&!shift
-     ?snapWallTranslation(original.element,sourceFloor.walls.filter(w=>!drag.ids.includes(w.id)),dx,dy,tol):null;
+     ?snapWallTranslation(original.element,sourceFloor.walls.filter(w=>!drag.ids.includes(w.id)&&isElementShown(sourceFloor,w)),dx,dy,tol):null;
     if(wallSnap?.guides.length===2)feedback=wallSnap;
     else{
      const generic=snapTranslation(sourceFloor,drag.ids,dx,dy,tol,{alignment:preferences.guides,axes:preferences.axes,targets:drag.targets,anchors:drag.anchors});
@@ -849,7 +893,25 @@ document.addEventListener('pointerdown',event=>{
  if(!$('editor-menu').hidden&&!event.target.closest('#editor-menu'))closeMenus();
 });
 window.addEventListener('resize',closeMenus);
-function modal(title,content){closeMenus();$('modal-title').textContent=title;$('modal-content').innerHTML=content;hydrateIcons($('modal-content'));$('modal').showModal();}
+function showEstimate(scope=''){
+ const rows=buildEstimate(project,scope),priced=rows.filter(r=>r.price!==null),total=priced.reduce((n,r)=>n+r.total,0);
+ modal('Смета и номенклатура',`<div class="estimate-controls"><label for="estimate-floor">Состав сметы</label><select id="estimate-floor"><option value="">Все этажи</option>${project.floors.map(f=>`<option value="${escapeHTML(f.id)}" ${scope===f.id?'selected':''}>${escapeHTML(f.name)}</option>`).join('')}</select><button class="button" id="estimate-save">Сохранить цены</button><button class="button" id="estimate-csv"><i data-icon="download"></i>Скачать CSV</button></div>
+ <div class="estimate-summary"><span>Позиций <strong>${rows.length}</strong></span><span>Изделий <strong>${rows.reduce((n,r)=>n+r.quantity,0)} шт.</strong></span><span>Сумма по заполненным ценам <strong>${fmt(total,2)} ₽</strong></span></div>
+ <p class="property-note">Включены все детали выбранных этажей, в том числе скрытые. Обвязка считается отдельными досками. Помещения, пустые проёмы, размеры и вспомогательные линии не являются изделиями. Укажите цены за штуку для расчёта стоимости. Заполнено цен: ${priced.length} из ${rows.length}.</p>
+ <div class="estimate-table-wrap"><table class="estimate-table"><thead><tr><th>Номенклатура</th><th>Размеры</th><th>Материал</th><th>Кол-во, шт.</th><th>Цена, ₽/шт.</th><th>Сумма, ₽</th><th>Этажи</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${escapeHTML(r.name)}</td><td>${escapeHTML(r.size)}</td><td>${escapeHTML(r.material||'—')}</td><td>${r.quantity}</td><td><input type="number" min="0" max="1000000000" step=".01" data-estimate-price="${i}" aria-label="Цена: ${escapeHTML(r.name+' '+r.size)}" placeholder="Не задана" value="${r.price??''}"></td><td>${r.total===null?'—':fmt(r.total,2)}</td><td>${escapeHTML(Object.entries(r.floors).map(([f,n])=>f+': '+n).join(', '))}</td></tr>`).join('')||'<tr><td colspan="7">В проекте пока нет изделий.</td></tr>'}</tbody></table></div>`);
+ $('modal').classList.add('estimate-dialog');
+ $('estimate-floor').onchange=event=>showEstimate(event.target.value);
+ const commitPrices=()=>{
+  const entries=$$('[data-estimate-price]').map(input=>({key:rows[Number(input.dataset.estimatePrice)].key,old:rows[Number(input.dataset.estimatePrice)].price,value:input.value.trim()===''?null:Math.round(input.valueAsNumber*100)/100}));
+  if(entries.some(e=>e.value!==null&&(!Number.isFinite(e.value)||e.value<0||e.value>1e9))){toast('Введите цену от 0 до 1 000 000 000 ₽.');return false;}
+  if(entries.every(e=>e.old===e.value))return true;
+  return mutate(()=>{project.estimatePrices??={};for(const {key,value} of entries)if(value===null)delete project.estimatePrices[key];else project.estimatePrices[key]=value;},'Цены сохранены');
+ };
+ $('estimate-save').onclick=()=>{if(commitPrices())showEstimate(scope);};
+ $$('[data-estimate-price]').forEach(input=>input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();if(commitPrices())showEstimate(scope);}});
+ $('estimate-csv').onclick=()=>{if(!commitPrices())return;const data=estimateCSV(buildEstimate(project,scope)),url=URL.createObjectURL(new Blob([data],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='Смета — '+project.name.replace(/[<>:"/\\|?*]/g,'-')+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);showEstimate(scope);};
+}
+function modal(title,content){$('modal').classList.remove('estimate-dialog');closeMenus();$('modal-title').textContent=title;$('modal-content').innerHTML=content;hydrateIcons($('modal-content'));$('modal').showModal();}
 function chooseConstruction(){
  modal('Вспомогательная геометрия',`<div class="structure-picker">
   ${[...Object.entries(GUIDE_STYLES),['point','Опорная точка']].map(([key,name])=>`<button type="button" data-construction="${key}"><i data-icon="${key==='point'?'axis':'align'}"></i><span><strong>${name}</strong><small>${key==='point'?'По точке':'По двум точкам'}</small></span></button>`).join('')}
@@ -1014,6 +1076,7 @@ function showAbout(){modal('Рабочее пространство','<p>Инт�
 $('about-button').onclick=showAbout;
 function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Камера в 3D','WASD · Q/E вверх/вниз · Shift быстрее'],['Высота деталей','Page Up / Down · Shift — 500 мм'],['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить или убрать из выделения','Ctrl + щелчок'],['Добавить рамкой','Ctrl + перетаскивание'],['Изменение размера','Квадратные ручки'],['Поворот','Ручка или угол в свойствах'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверной проём','G → стена → размеры'],['Вставить дверь','D → пустой проём'],['Окно','O'],['Контекстное меню','Правая кнопка / Shift+F10'],['Перекрытие','P → точки → Enter'],['Фундаменты / каркас','Выберите тип слева'],['Линейка','L → две точки'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
 $('help-button').onclick=showHelp;
+$('estimate-button').onclick=()=>showEstimate();$('estimate-menu-button').onclick=()=>showEstimate();
 $('settings-button').onclick=()=>{
  modal('Отображение и сетка',`<p>Настройки сохраняются на этом устройстве.</p>
   ${[['grid','Показывать сетку'],['gridSnap','Привязка к сетке'],['dark','Тёмная тема'],['textures','Текстуры материалов'],['rulers','Координатные линейки'],['labels','Названия помещений'],['dimensions','Размеры'],['snap','Привязки к элементам'],['axes','Оси деталей и привязки к осям'],['guides','Направляющие и выравнивание'],['holeXray','Отверстия сквозь детали · пунктир'],['surfacePlacement','Устанавливать на поверхность']].map(([key,label])=>`<label class="settings-option">${label}<input class="toggle" type="checkbox" data-pref="${key}" ${preferences[key]?'checked':''}></label>`).join('')}
@@ -1065,14 +1128,16 @@ surface.addEventListener('pointerdown',event=>{
   const start=snapped(p,event);pileArea={a:start,b:start,points:[],screen:pointerPosition(event),error:''};return;
  }
  if(tool!=='select'){choosePoint(snapped(p,event),event);return;}
- const handle=event.target.closest('[data-handle]'),ctrl=event.ctrlKey||event.metaKey;
+ let handle=event.target.closest('[data-handle]');const ctrl=event.ctrlKey||event.metaKey;
  let element=event.target.closest('[data-element]');
  if(handle&&ctrl)element=document.elementsFromPoint(event.clientX,event.clientY).find(node=>node.hasAttribute('data-element'));
  const id=element?.dataset.element||handle?.dataset.owner;
+ const item=id?findElement(floor(),id):null;
+ if(handle&&handle.dataset.handle!=='rotate'&&item?.element.a&&!item.host){const f=elementFrame(item.element),dx=p.x-f.center.x,dy=p.y-f.center.y;if(Math.abs(dx*f.u.x+dy*f.u.y)<=8*pixelUnit()&&Math.abs(dx*f.v.x+dy*f.v.y)<f.h/2)handle=null;}
  const extend=extendSelection(event);
  surface.setPointerCapture(event.pointerId);
  if((handle&&!ctrl)||id&&!extend){
-  beginElementDrag(id,p,verticalMode?'vertical':planDirection!=='top'?'view-plane':handle?.dataset.handle||null);
+  beginElementDrag(id,p,handle?.dataset.handle||(verticalMode?'vertical':planDirection!=='top'?'view-plane':null));
   if(movement){movement.pointerStart=pointerPosition(event);surface.classList.add('moving-element');}
  }else marquee={pointerStart:pointerPosition(event),worldStart:p,extend,id,active:false};
 });

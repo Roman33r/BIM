@@ -6,10 +6,10 @@ import {elementTilts,applyElementTilts,convexOutline} from './spatial.js';
 
 // Shared world geometry keeps the dashed bores consistent in all projections.
 export function holeVolumes(floor){
- const members=floor.structures||[],result=[];
+ const members=floor.structures||[],source=floor.sourceStructures||members,result=[];
  for(const e of [...members,...floor.slabs]){
-  const [bottom,top]=verticalRange(e),holes=isPileCap(e)?capHoles(e).map(p=>({...p,bottom,top})):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2,bottom,top}]:componentHoles(e,members);
-  const support=isPileCap(e)?members.find(p=>p.id===e.pileId):undefined,tilts=elementTilts(e,support);
+  const [bottom,top]=verticalRange(e),holes=isPileCap(e)?capHoles(e).map(p=>({...p,bottom,top})):isRingFastener(e)?[{x:e.x,y:e.y,radius:e.diameter/2,bottom,top}]:componentHoles(e,source);
+  const support=isPileCap(e)?source.find(p=>p.id===e.pileId):undefined,tilts=elementTilts(e,support);
   const transform=p=>{const q=applyElementTilts(p,tilts);return {...q,z:q.z+floor.elevation};};
   holes.forEach((h,index)=>{
    const loops=[h.bottom,h.top].map(z=>Array.from({length:32},(_,i)=>transform({x:h.x+h.radius*Math.cos(i*Math.PI/16),y:h.y+h.radius*Math.sin(i*Math.PI/16),z})));

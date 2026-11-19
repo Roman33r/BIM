@@ -65,9 +65,9 @@ export function projectedElement(e,support,members=[]){
 }
 
 export function floorTiltProjections(floor){
- const structures=floor.structures||[],byId=new Map(structures.map(e=>[e.id,e])),projections=new Map();
+ const structures=floor.structures||[],byId=new Map((floor.sourceStructures||structures).map(e=>[e.id,e])),projections=new Map();
  for(const element of [...floor.walls,...floor.slabs,...(floor.furniture||[]),...structures]){
-  const outline=projectedElement(element,isPileCap(element)?byId.get(element.pileId):undefined,structures);
+  const outline=projectedElement(element,isPileCap(element)?byId.get(element.pileId):undefined,floor.sourceStructures||structures);
   if(outline.length>1)projections.set(element.id,outline);
  }
  return projections;

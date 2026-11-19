@@ -13,6 +13,7 @@ import {verticalRange,canMoveVertical} from './vertical.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
 import {isFastener,fastenerRange,capGeometry,fastenerObject} from './hardware.js';
+import {visibleFloor} from './visibility.js';
 import {holeVolumes} from './hole-display.js';
 import {componentGeometries} from './assembly.js';
 import {boardGeometry} from './board-mounts.js';
@@ -181,8 +182,8 @@ export function createScene(container,onSelect,gestures={}){
    for(const i of [0,8,16,24])add(hole.loops[0][i],hole.loops[1][i]);
    const line=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),new THREE.LineDashedMaterial({color:opts.dark?0x7ee4ef:0x087b99,dashSize:.006,gapSize:.004,depthTest:false,depthWrite:false}));line.computeLineDistances();line.renderOrder=25;line.userData.holeXray=true;line.raycast=()=>{};layer.add(line);
   }
-  const structures=floor.structures||[],structuresById=new Map(structures.map(e=>[e.id,e]));
-  for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured,structures);
+  const structures=floor.structures||[],allStructures=floor.sourceStructures||structures,structuresById=new Map(allStructures.map(e=>[e.id,e]));
+  for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured,allStructures);
 
   for(const wall of floor.walls){
    const mat=material(wall.material,ids.has(wall.id),textured),h=section?Math.min(wall.height,heightLimit):wall.height;
@@ -190,6 +191,7 @@ export function createScene(container,onSelect,gestures={}){
    if(wall.baseElevation){const raised=new THREE.Group();raised.position.y=wall.baseElevation;wallLayer.add(raised);wallLayer=raised;}
    for(const {start,end,bottom,top} of wallBlocks(wall,h))localBox(wallLayer,wall,start,end,bottom,top,mat,wall.id);
    for(const o of wall.openings){
+    if(o.hidden)continue;
     if(o.sill>=h)continue;
     const isSelected=ids.has(o.id);
     if(o.kind==='doorway'){
@@ -249,6 +251,7 @@ export function createScene(container,onSelect,gestures={}){
   group.clear();overlays.clear();
  }
  function build(floor,ids,opts={}){
+  floor=visibleFloor(floor);opts={...opts,floors:opts.floors?.map(visibleFloor)};
   const levels=opts.floors||[floor],empty=new Set();
   const layout=JSON.stringify(levels.map(level=>[level.id,level.elevation]));
   const fit=floorLayout!==layout;
@@ -351,10 +354,10 @@ export function createScene(container,onSelect,gestures={}){
  }
  function pick(event){
   setRay(event);
-  raycaster.params.Line.threshold=.08;
+  raycaster.params.Line.threshold=(camera.isOrthographicCamera?(camera.top-camera.bottom):2*camera.position.distanceTo(target)*Math.tan(camera.fov*Math.PI/360))/container.clientHeight*2;
   if(!activeGroup)return;
   activeGroup.updateWorldMatrix(true,true);
-  return raycaster.intersectObjects(activeGroup.children,true).find(hit=>hit.object.userData.elementId);
+  return raycaster.intersectObjects(activeGroup.children,true).find(hit=>{const id=hit.object.userData.elementId;if(!id)return false;const item=findElement(currentFloor,id);return hit.object.isMesh||['room','dimension','guide'].includes(item?.element.kind);});
  }
  function groundPoint(event,offsetX=0,planeY=currentFloor?.elevation??0){
   setRay(event,offsetX);
@@ -427,7 +430,7 @@ export function createScene(container,onSelect,gestures={}){
   event.preventDefault();container.setPointerCapture(event.pointerId);
  });
  container.addEventListener('pointermove',event=>{
-  if(!drag)return;
+  if(!drag){renderer.domElement.style.cursor=pick(event)?'grab':'default';return;}
   const point=clientPoint(event),dx=point.x-drag.start.x,dy=point.y-drag.start.y;
   drag.active ||= Math.hypot(dx,dy)>=4;
   if(!drag.active)return;

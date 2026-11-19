@@ -41,10 +41,13 @@ export function moveSelectionToFloor(source,target,ids){
   source[key]=entities.filter(e=>!selected.has(e.id));
   (target[key]??=[]).push(...items);
   for(const e of items){
+   if(e.mounts){e.mounts=e.mounts.filter(m=>selected.has(m.capId));if(!e.mounts.length)delete e.mounts;}
    moved.push(e.id);
    if(e.openings)moved.push(...e.openings.filter(o=>selected.has(o.id)).map(o=>o.id));
   }
  }
+ const remaining=new Set((source.structures||[]).map(e=>e.id));
+ for(const e of source.structures||[])if(e.mounts){e.mounts=e.mounts.filter(m=>remaining.has(m.capId));if(!e.mounts.length)delete e.mounts;}
  return moved;
 }
 export function setOpeningDoor(opening,installed){
@@ -65,6 +68,7 @@ export function translateElement(floor,id,dx,dy){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');
  if(!Number.isFinite(dx)||!Number.isFinite(dy))throw new Error('Некорректное перемещение.');
  const {element:e,host}=found;
+ if(e.mounts)delete e.mounts;
  if(isPileCap(e)&&e.pileId!==undefined){translateElement(floor,e.pileId,dx,dy);return found;}
  if(host){
   const length=Math.hypot(host.b.x-host.a.x,host.b.y-host.a.y),delta=(dx*(host.b.x-host.a.x)+dy*(host.b.y-host.a.y))/length;
@@ -87,7 +91,9 @@ export function translateSelection(floor, ids, dx, dy){
   const found = findElement(floor,id);
   if (!found || isPileCap(found.element)&&found.element.pileId!==undefined) continue;
   if (!found.host) {
+   const mounts=found.element.mounts?.every(m=>selected.has(m.capId))?structuredClone(found.element.mounts):null;
    translateElement(floor,id,dx,dy);
+   if(mounts)found.element.mounts=mounts;
    continue;
   }
   if (selected.has(found.host.id)) continue;

@@ -12,6 +12,7 @@ export const STRUCTURE_TYPES={
  header:{kind:'framing',shape:'line',name:'Хидер (перемычка)',icon:'opening-beam',sizes:{thickness:.1,height:.2,material:'Дерево'}},
  ibeam:{kind:'framing',shape:'line',name:'Двутавр',icon:'ibeam',sizes:{thickness:.1,height:.2,gauge:.008,material:'Сталь'}},
  rim:{kind:'framing',shape:'line',name:'Обвязочная балка',icon:'beam',sizes:{thickness:.15,height:.2,material:'Дерево'}},
+ rimBoard:{kind:'framing',shape:'line',name:'Отдельная доска обвязки',icon:'beam',sizes:{thickness:.05,height:.2,material:'Дерево'}},
  blocking:{kind:'framing',shape:'line',name:'Распорка между лагами',icon:'beam',sizes:{thickness:.05,height:.15,material:'Дерево'}},
  ...FASTENER_TYPES
 };

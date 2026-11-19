@@ -63,3 +63,5 @@
 .tools-top{overflow:auto;min-height:0}
 .tools-top .tool{flex:none}
 @media(max-width:760px){.floor-controls select{max-width:120px}}
+.projection-select{max-width:130px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;padding:3px 6px;pointer-events:auto}
+#raise-button,#lower-button{font-size:11px;white-space:nowrap;min-width:32px}

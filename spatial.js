@@ -1,6 +1,7 @@
 import {elementFootprint,elementFrame,normalAngle} from './transforms.js';
 import {isPileCap,isRoundStructure,isStructure,rimBoardSegments,screwBladeMesh} from './structures.js';
 import {isFastener,fastenerRange} from './hardware.js';
+import {verticalRange} from './vertical.js';
 
 export const tiltFields=['tiltX','tiltY'];
 export const canTiltElement=e=>['wall','slab','furniture','foundation','framing','fastener'].includes(e.kind);
@@ -11,13 +12,6 @@ export function setElementTilt(element,axis,value){
  const angle=value>=-180&&value<180?value:normalAngle(value);
  if(angle)element[axis]=angle;
  else delete element[axis];
-}
-
-function verticalRange(e){
- if(isFastener(e))return fastenerRange(e);
- if(isStructure(e))return [e.elevation-e.height,e.elevation];
- if(e.kind==='slab')return [-e.thickness,0];
- return [0,e.height];
 }
 
 export function elementTilts(e,support){
@@ -40,7 +34,7 @@ export function applyElementTilts(point,tilts){
  return point;
 }
 
-function convexOutline(points){
+export function convexOutline(points){
  const sorted=[...points].sort((a,b)=>a.x-b.x||a.y-b.y);
  const unique=sorted.filter((p,i)=>!i||Math.hypot(p.x-sorted[i-1].x,p.y-sorted[i-1].y)>1e-8);
  if(unique.length<3)return unique;

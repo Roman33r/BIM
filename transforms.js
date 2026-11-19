@@ -96,6 +96,7 @@ export function transformHandles(e,host,unit=.02){
 }
 export function rotateElement(floor,id,degrees){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found;if(host)throw new Error('Поворот проёма определяется стеной.');
+ delete e.mounts;
  const f=elementFrame(e),center=f.center;
  if(e.kind==='guide'&&e.type==='point')return found;
  if(e.a){e.a=rotatePoint(e.a,center,degrees);e.b=rotatePoint(e.b,center,degrees);}
@@ -110,6 +111,7 @@ export function setElementAngle(floor,id,angle){
 }
 export function resizeElement(floor,id,handle,point){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found,f=elementFrame(e,host);
+ if(e.mounts&&['a','b'].includes(handle)){e.mounts=e.mounts.filter(m=>m.end!==handle);if(!e.mounts.length)delete e.mounts;}
  if(e.kind==='guide'){
   if(e.type==='line'&&['a','b'].includes(handle))e[handle]={...point};
  }

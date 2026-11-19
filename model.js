@@ -5,6 +5,7 @@ import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structu
 import {isFastener,validateCapHoles} from './hardware.js';
 import {canTiltElement,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
+import {syncBoardMounts} from './board-mounts.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -96,6 +97,7 @@ export function validateProject(value){
     if(!num(e.diameter,.001,.2)||!num(e.headDiameter,e.diameter/(e.type==='nut'?Math.cos(Math.PI/6):1)+.001,.4)||!num(e.rotation,-360,360))fail();
     if(spec.sizes.headHeight!==undefined&&!num(e.headHeight,.0005,.1))fail();
     if(spec.sizes.threadPitch!==undefined&&!num(e.threadPitch,.0005,Math.min(.02,e.height/2)))fail();
+    if(spec.sizes.ringPitch!==undefined&&!num(e.ringPitch,.0005,Math.min(.02,e.height/2)))fail();
    }else if(spec.shape==='round'){
     if(!num(e.diameter,.05,e.type==='screwPile'?9.99:10))fail();
     if(e.type==='screwPile'&&(!num(e.bladeDiameter,e.diameter+.01-1e-9,10)||!num(e.bladeThickness,.002,.06)
@@ -111,6 +113,7 @@ export function validateProject(value){
    capped.add(e.pileId);
   }
   syncPileCaps(f);
+  syncBoardMounts(f);
   if(!Array.isArray(f.construction)||f.construction.length>2000)fail();
   for(const e of f.construction){
    if(!e||e.kind!=='guide'||!str(e.name))fail();
@@ -120,6 +123,7 @@ export function validateProject(value){
     ||!Object.hasOwn(GUIDE_STYLES,e.style)||!Number.isInteger(e.divisions)||!num(e.divisions,1,100))fail();
   }
   for(const e of listElements(f)){
+   if(e.baseElevation!==undefined&&!num(e.baseElevation,-100,100))fail();
    if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
    for(const key of tiltFields)if(e[key]!==undefined&&(!canTiltElement(e)||!num(e[key],-180,180)))fail();
   }

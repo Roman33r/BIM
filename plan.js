@@ -11,7 +11,8 @@ import {floorTiltProjections} from './spatial.js';
 import {guidePoints,guideDash} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
 import {validGridStep} from './grid.js';
-import {capHoles,isFastener,isRingFastener} from './hardware.js';
+import {capHoles,isFastener,isRingFastener,fastenerFamily} from './hardware.js';
+import {boardMountPoints} from './board-mounts.js';
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const n=value=>Number(value.toFixed(4));
 const path=(d,attrs='')=>`<path d="${d}" ${attrs}/>`;
@@ -44,6 +45,10 @@ function constructionPlan(floor,selectedIds,unit){
  return output;
 }
 function structureShape(element,attrs='',members=[]){
+ if(element.type==='rimBoard'&&element.mounts?.length){
+  const outer=elementFootprint(element),holes=boardMountPoints(element,members).map(m=>m.point);
+  return `<path class="mounted-rim-board" d="M${outer.map(p=>`${p.x} ${p.y}`).join('L')}Z${holes.map(({x,y,radius:r})=>`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`).join('')}" fill-rule="evenodd" ${attrs}/>`;
+ }
  if(isPileCap(element)){
   const outer=elementFootprint(element),holes=capHoles(element);
   const outline=`M${outer.map(p=>`${n(p.x)} ${n(p.y)}`).join('L')}Z`;
@@ -52,7 +57,7 @@ function structureShape(element,attrs='',members=[]){
  }
  if(isFastener(element)){
   const {x,y,headDiameter,diameter,type,rotation}=element,r=headDiameter/2;
-  const outer=['bolt','anchor','nut'].includes(type)?Array.from({length:6},(_,i)=>({x:x+r*Math.cos(i*Math.PI/3+rotation*Math.PI/180),y:y+r*Math.sin(i*Math.PI/3+rotation*Math.PI/180)})):null;
+  const outer=['bolt','anchor','nut'].includes(fastenerFamily(element))?Array.from({length:6},(_,i)=>({x:x+r*Math.cos(i*Math.PI/3+rotation*Math.PI/180),y:y+r*Math.sin(i*Math.PI/3+rotation*Math.PI/180)})):null;
   const outline=outer?`M${outer.map(p=>`${p.x} ${p.y}`).join('L')}Z`:`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`;
   const hole=isRingFastener(element)?`M${x+diameter/2} ${y}a${diameter/2} ${diameter/2} 0 1 0 ${-diameter} 0a${diameter/2} ${diameter/2} 0 1 0 ${diameter} 0Z`:'';
   return `<path class="fastener-head" d="${outline+hole}" fill-rule="evenodd" ${attrs}/>`;
@@ -71,7 +76,7 @@ function structurePlan(element,selected,fill,dark,members=[]){
   :structureShape(element,attrs,members);
  if(isFastener(element)){
   const {x,y}=element,r=element.headDiameter*.28,angle=(element.rotation||0)*Math.PI/180;
-  if(element.type==='screw')geometry+=trace([{x:x-r*Math.cos(angle),y:y-r*Math.sin(angle)},{x:x+r*Math.cos(angle),y:y+r*Math.sin(angle)}],`stroke="${stroke}" stroke-width=".0008"`)+trace([{x:x+r*Math.sin(angle),y:y-r*Math.cos(angle)},{x:x-r*Math.sin(angle),y:y+r*Math.cos(angle)}],`stroke="${stroke}" stroke-width=".0008"`);
+  if(fastenerFamily(element)==='screw')geometry+=trace([{x:x-r*Math.cos(angle),y:y-r*Math.sin(angle)},{x:x+r*Math.cos(angle),y:y+r*Math.sin(angle)}],`stroke="${stroke}" stroke-width=".0008"`)+trace([{x:x+r*Math.sin(angle),y:y-r*Math.cos(angle)},{x:x-r*Math.sin(angle),y:y+r*Math.cos(angle)}],`stroke="${stroke}" stroke-width=".0008"`);
   geometry+=`<circle cx="${x}" cy="${y}" r="${element.headDiameter/2}" fill="transparent" stroke="transparent" stroke-width="8" vector-effect="non-scaling-stroke"/>`;
  }
  if(element.a&&element.thickness<.15){

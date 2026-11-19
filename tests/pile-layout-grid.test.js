@@ -6,7 +6,7 @@ import {createEmptyProject} from '../model.js';
 import {makeStructure} from '../structures.js';
 import {renderPlan} from '../plan.js';
 
-test('pile area includes its edges, center and internal grid with no interval over the requested spacing',()=>{
+test('pile area bisects both axes until every interval is smaller than the requested spacing',()=>{
  const a={x:-1,y:2},b={x:5.4,y:6.1};
  const points=pileAreaPoints(a,b);
  assert.deepEqual(points,pileAreaPoints(b,a));
@@ -14,11 +14,24 @@ test('pile area includes its edges, center and internal grid with no interval ov
   const values=[...new Set(points.map(p=>p[axis]))].sort((a,b)=>a-b);
   assert.equal(values[0],min);assert.equal(values.at(-1),max);
   assert.ok(values.includes((min+max)/2));
-  assert.ok(values.slice(1).every((value,i)=>value-values[i]<=1.5+1e-8));
+  assert.ok(values.slice(1).every((value,i)=>value-values[i]<1.5));
+  assert.ok(values.slice(1).every((value,i)=>Math.abs(value-values[i]-(max-min)/(values.length-1))<1e-8));
  }
  assert.equal(new Set(points.map(p=>p.x+','+p.y)).size,points.length);
- assert.equal(pileAreaPoints({x:0,y:0},{x:6,y:3}).length,15);
+ const regular=pileAreaPoints({x:0,y:0},{x:6,y:3});
+ assert.equal(regular.length,45);
+ assert.deepEqual(regular.slice(0,4),[{x:0,y:0},{x:6,y:0},{x:0,y:3},{x:6,y:3}]);
+ const firstInside=regular.findIndex(p=>p.x>0&&p.x<6&&p.y>0&&p.y<3);
+ assert.ok(regular.slice(firstInside).every(p=>p.x>0&&p.x<6&&p.y>0&&p.y<3));
  assert.throws(()=>pileAreaPoints({x:0,y:0},{x:100,y:100},.1));
+});
+
+test('a short pile interval keeps only its ends; an interval equal to the step gets a midpoint',()=>{
+ assert.deepEqual(pileAreaPoints({x:0,y:0},{x:1.4,y:1}),[{x:0,y:0},{x:1.4,y:0},{x:0,y:1},{x:1.4,y:1}]);
+ const exact=pileAreaPoints({x:0,y:0},{x:1.5,y:1});
+ assert.deepEqual([...new Set(exact.map(p=>p.x))].sort((a,b)=>a-b),[0,.75,1.5]);
+ assert.deepEqual(pileAreaPoints({x:2,y:3},{x:2,y:3}),[{x:2,y:3}]);
+ assert.throws(()=>pileAreaPoints({x:0,y:0},{x:6,y:3},1.5,44),/больше 44/);
 });
 
 test('selected pile sizes measure shaft extents, center distances and slope independently of other structures',()=>{

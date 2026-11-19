@@ -1,5 +1,10 @@
 const degrees = radians => radians * 180 / Math.PI;
 
+export function linearDimensionOffset(a,b,point) {
+ const dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);
+ return length?((point.y-a.y)*dx-(point.x-a.x)*dy)/length:0;
+}
+
 function angleDirections({a, vertex, b}) {
  const start = Math.atan2(a.y-vertex.y, a.x-vertex.x);
  const end = Math.atan2(b.y-vertex.y, b.x-vertex.x);

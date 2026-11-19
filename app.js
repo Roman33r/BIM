@@ -6,7 +6,7 @@ import {loadProjects,saveProjects,CATALOG_KEY,LEGACY_KEY} from './project-store.
 import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,setElementAngle,normalAngle,length,sub,isSimplePolygon} from './transforms.js';
 import {snapTargets,snapPoint,snapTranslation,snapWallTranslation} from './snapping.js';
 import {AXIS_TYPES,extendSelection,selectInPlan,selectionBounds,showSelectionBox} from './selection.js';
-import {angleLabel,angleRadius,angleValue} from './annotations.js';
+import {angleLabel,angleRadius,angleValue,linearDimensionOffset} from './annotations.js';
 import {materialNames} from './materials.js';
 import {STRUCTURE_TYPES,isStructure,isRoundStructure,isPileCap,linkedPileSelection,makeStructure,pileCapFor} from './structures.js';
 import {endpointAtLength,rulerTicks,segmentMeasurement} from './measurements.js';
@@ -107,13 +107,16 @@ function renderPlanView(){
  const measurement=tool==='measure'
   ?(draft.length&&effectiveHover?{a:draft[0],b:effectiveHover}:measuredLine?.floorId===floorId?measuredLine:null):null;
  const drawMeasurement=start&&effectiveHover&&tool!=='measure'?{a:start,b:effectiveHover}:null;
+ const dimensionDraft=tool==='dimension'&&draft.length===2
+  ?{a:draft[0],b:draft[1],offset:Math.max(-100,Math.min(100,linearDimensionOffset(draft[0],draft[1],hover||draft[1])))}:null;
  renderMeasurement(measurement);
  renderDrawingInput(start,drawMeasurement);
- $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea,drawMeasurement}).content;
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||['angle','dimension'].includes(tool),dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)||dimensionDraft?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea,drawMeasurement,dimensionDraft}).content;
 }
 function drawingStart(){
  if(!draft.length)return null;
- if(['wall','dimension','room','slab','measure','angle'].includes(tool))return tool==='angle'?draft[0]:draft.at(-1);
+ if(tool==='dimension')return draft.length===1?draft[0]:null;
+ if(['wall','room','slab','measure','angle'].includes(tool))return tool==='angle'?draft[0]:draft.at(-1);
  if(tool==='construction'&&constructionType!=='point')return draft[0];
  if(tool==='structure'&&['line','contour'].includes(STRUCTURE_TYPES[structureType].shape))return draft.at(-1);
  return null;
@@ -347,12 +350,13 @@ function updateProperty(input){
 }
 async function ensureScene(){if(scene){refreshScene();scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany,context:showEditorMenu});refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
 function setView(next){view=next;$('viewports').dataset.mode=next;$$('[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===next);button.setAttribute('aria-pressed',String(button.dataset.view===next));});if(next!=='plan')ensureScene();if(tool!=='select'&&next==='3d')setTool('select');}
-const hints={select:'Ctrl + щелчок — добавить к выделению · Правая кнопка — меню',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',doorway:'Укажите место на стене и задайте размеры проёма',door:'Нажмите на пустой дверной проём',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки для размера',room:'Задайте два противоположных угла помещения'};
+const hints={select:'Ctrl + щелчок — добавить к выделению · Правая кнопка — меню',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',doorway:'Укажите место на стене и задайте размеры проёма',door:'Нажмите на пустой дверной проём',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки, затем высоту размерной линии',room:'Задайте два противоположных угла помещения'};
 function updateToolHint(){
  let hint=hints[tool];
  if(tool==='select'&&!listElements(floor()).length)hint='Пустой этаж · Выберите «Стена», «Плита» или добавьте мебель';
  if(tool==='slab')hint=`${floorLabel(floor())} · ${hint}`;
  if(tool==='angle')hint=['Укажите вершину угла','Укажите точку на первом луче','Укажите точку на втором луче'][draft.length];
+ if(tool==='dimension')hint=['Размер · 1/3 · Укажите первую точку','Размер · 2/3 · Укажите вторую точку или введите длину','Размер · 3/3 · Задайте высоту размерной линии третьим щелчком'][draft.length];
  if(tool==='construction')hint=constructionType==='point'?'Укажите опорную точку для привязки':draft.length?'Укажите конец вспомогательной линии':'Укажите начало вспомогательной линии · Shift — ортогонально';
  if(tool==='pile-area')hint=`Сваи по области · Зажмите левую кнопку и задайте прямоугольник · Шаг ${fmt(pileSpacing*1000)} мм`;
  if(tool==='measure')hint=draft.length?'Линейка · Укажите вторую точку · Shift выравнивает замер'
@@ -381,7 +385,7 @@ function snapped(point,event){let p={x:point.x,y:point.y};editorFeedback={};
   if(preferences.snap){const result=snapPoint(p,snapTargets(floor(),null,preferences.axes,sceneOptions()),pixelUnit()*8,{alignment:preferences.guides,axes:preferences.axes});editorFeedback=result;if(result.label)p=result.point;}
   if(!editorFeedback.label&&preferences.gridSnap)p=snapToGrid(p,preferences.gridStep);
  }
- if(event.shiftKey&&draft.length){const start=tool==='angle'?draft[0]:draft[draft.length-1];if(Math.abs(p.x-start.x)>Math.abs(p.y-start.y))p.y=start.y;else p.x=start.x;}
+ if(event.shiftKey&&draft.length&&!(tool==='dimension'&&draft.length===2)){const start=tool==='angle'?draft[0]:draft[draft.length-1];if(Math.abs(p.x-start.x)>Math.abs(p.y-start.y))p.y=start.y;else p.x=start.x;}
  const start=drawingStart();
  if(start){numericDirection={...p};const requested=drawLengthValue();if(requested!==null){p=endpointAtLength(start,p,requested);editorFeedback={};}}
  return p;}
@@ -477,7 +481,15 @@ function choosePoint(p,event){
   }
   return;
  }
- if(tool==='wall'||tool==='dimension'||tool==='room'){draft.push(p);if(draft.length===2){const [a,b]=draft;draft=[];hover=null;if(Math.hypot(a.x-b.x,a.y-b.y)<.2){toast('Минимальная длина — 200 мм.');renderPlanView();return;}mutate(()=>{const id=uid(tool==='wall'?'СТ':tool==='room'?'ПМ':'РЗ');if(tool==='wall'){floor().walls.push({id,kind:'wall',name:'Новая стена',a,b,thickness:.3,height:floor().height,material:'Кирпич',loadBearing:false,openings:[]});}else if(tool==='room'){floor().rooms.push({id,kind:'room',name:'Помещение '+(floor().rooms.length+1),x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)});}else floor().dimensions.push({id,kind:'dimension',name:'Размер',a,b,offset:.5});setSelection([id]);},tool==='wall'?'Стена добавлена':tool==='room'?'Помещение добавлено':'Размер добавлен');}else renderPlanView();
+ if(tool==='dimension'){
+  if(draft.length===1&&length(sub(p,draft[0]))<.2){toast('Минимальная длина — 200 мм.');return;}
+  if(draft.length<2){draft.push(p);hover=null;editorFeedback={};updateToolHint();renderPlanView();return;}
+  const [a,b]=draft,offset=Math.max(-100,Math.min(100,linearDimensionOffset(a,b,p)));
+  draft=[];hover=null;editorFeedback={};
+  mutate(()=>{const id=uid('РЗ');floor().dimensions.push({id,kind:'dimension',name:'Размер',a,b,offset});setSelection([id]);},'Размер добавлен');
+  return;
+ }
+ if(tool==='wall'||tool==='room'){draft.push(p);if(draft.length===2){const [a,b]=draft;draft=[];hover=null;if(Math.hypot(a.x-b.x,a.y-b.y)<.2){toast('Минимальная длина — 200 мм.');renderPlanView();return;}mutate(()=>{const id=uid(tool==='wall'?'СТ':'ПМ');if(tool==='wall'){floor().walls.push({id,kind:'wall',name:'Новая стена',a,b,thickness:.3,height:floor().height,material:'Кирпич',loadBearing:false,openings:[]});}else floor().rooms.push({id,kind:'room',name:'Помещение '+(floor().rooms.length+1),x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(b.x-a.x),h:Math.abs(b.y-a.y)});setSelection([id]);},tool==='wall'?'Стена добавлена':'Помещение добавлено');}else renderPlanView();
  }else if(tool==='slab'){if(event.detail>1)return;draft.push(p);renderPlanView();
  }else if(tool==='doorway'||tool==='window'){
   const target=findElement(floor(),event.target.closest('[data-element]')?.dataset.element);
@@ -725,7 +737,7 @@ function chooseStructure(category){
  const options=Object.entries(STRUCTURE_TYPES).filter(([,spec])=>spec.kind===category);
  const methods={round:'По точке',rect:'По точке',line:'По двум точкам',contour:'По контуру'};
  modal(category==='foundation'?'Фундаменты':'Каркас перекрытия',`<div class="structure-picker">
-  ${category==='foundation'?'<button type="button" id="pile-area-button"><i data-icon="pile"></i><span><strong>Сваи по области</strong><small>Края, середина и внутреннее поле · шаг 1,5 м</small></span></button>':''}
+  ${category==='foundation'?`<button type="button" id="pile-area-button"><i data-icon="pile"></i><span><strong>Сваи по области</strong><small>Края и деление пополам · шаг ${fmt(pileSpacing*1000)} мм</small></span></button>`:''}
   ${options.map(([type,spec])=>`<button type="button" data-structure="${type}">
    <i data-icon="${spec.icon}"></i><span><strong>${spec.name}</strong><small>${methods[spec.shape]}</small></span>
   </button>`).join('')}
@@ -740,7 +752,7 @@ function choosePileArea(){
  modal('Сваи по области',`<form id="pile-area-form" class="floor-form">
   <label for="pile-area-type">Тип свай</label><select id="pile-area-type"><option value="screwPile">Винтовые сваи</option><option value="pile">Бетонные сваи</option></select>
   <label for="pile-area-step">Шаг свай, мм</label><input id="pile-area-step" type="number" min="100" max="100000" step="1" value="${pileSpacing*1000}" required>
-  <p>Перетащите мышь по плану, чтобы задать прямоугольник. Сваи появятся на границах, средних осях и внутри. У границ шаг может быть короче.</p>
+  <p>Перетащите мышь по плану, чтобы задать прямоугольник. Сначала сваи ставятся по краям. Промежутки делятся пополам, пока расстояние между соседними сваями не станет меньше заданного шага. По тем же осям заполняется область внутри.</p>
   <div class="modal-actions"><button type="submit" class="button primary">Задать область мышью</button></div>
  </form>`);
  $('pile-area-type').value=pileAreaType;

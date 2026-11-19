@@ -18,8 +18,8 @@ const rect=(x,y,w,h,attrs='')=>`<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" he
 const text=(x,y,value,attrs='')=>`<text x="${n(x)}" y="${n(y)}" ${attrs}>${esc(value)}</text>`;
 function dimension(a,b,offset=0.6){
  const dx=b.x-a.x,dy=b.y-a.y,l=Math.hypot(dx,dy);if(!l)return '';
- const px=-dy/l,py=dx/l,x1=a.x+px*offset,y1=a.y+py*offset,x2=b.x+px*offset,y2=b.y+py*offset;
- return `<g fill="none" stroke="var(--plan-dimension)" stroke-width=".012">${path(`M${n(a.x+px*0.12)} ${n(a.y+py*0.12)}L${n(x1+px*.14)} ${n(y1+py*.14)}M${n(b.x+px*.12)} ${n(b.y+py*.12)}L${n(x2+px*.14)} ${n(y2+py*.14)}M${n(x1)} ${n(y1)}L${n(x2)} ${n(y2)}`)}${[a,b].map(p=>path(`M${n(p.x+px*offset-.065)} ${n(p.y+py*offset+.09)}l.13 -.18`)).join('')}</g>${text((x1+x2)/2+px*.12,(y1+y2)/2+py*.12,Math.round(l*1000).toLocaleString('ru-RU'),`fill="var(--plan-text)" font-size=".19" text-anchor="middle" transform="rotate(${n(Math.atan2(dy,dx)*180/Math.PI)} ${n((x1+x2)/2+px*.12)} ${n((y1+y2)/2+py*.12)})"`)}`;
+ const px=-dy/l,py=dx/l,side=Math.sign(offset)||1,x1=a.x+px*offset,y1=a.y+py*offset,x2=b.x+px*offset,y2=b.y+py*offset;
+ return `<g fill="none" stroke="var(--plan-dimension)" stroke-width=".012">${path(`M${n(a.x+px*0.12*side)} ${n(a.y+py*0.12*side)}L${n(x1+px*.14*side)} ${n(y1+py*.14*side)}M${n(b.x+px*.12*side)} ${n(b.y+py*.12*side)}L${n(x2+px*.14*side)} ${n(y2+py*.14*side)}M${n(x1)} ${n(y1)}L${n(x2)} ${n(y2)}`)}${[a,b].map(p=>path(`M${n(p.x+px*offset-.065)} ${n(p.y+py*offset+.09)}l.13 -.18`)).join('')}</g>${text((x1+x2)/2+px*.12*side,(y1+y2)/2+py*.12*side,Math.round(l*1000).toLocaleString('ru-RU'),`fill="var(--plan-text)" font-size=".19" text-anchor="middle" transform="rotate(${n(Math.atan2(dy,dx)*180/Math.PI)} ${n((x1+x2)/2+px*.12*side)} ${n((y1+y2)/2+py*.12*side)})"`)}`;
 }
 const coords=points=>points.map(p=>`${n(p.x)},${n(p.y)}`).join(' ');
 const trace=(points,attrs='')=>`<polyline points="${coords(points)}" ${attrs}/>`;
@@ -109,7 +109,7 @@ function floorReference(floor,color){
  for(const contour of floorTiltProjections(floor).values())outlines+=close(contour);
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
-export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,measurement,drawMeasurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
+export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,dimensionDraft,structurePreview,measurement,drawMeasurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
  const colors=dark?{'--plan-text':'#dce5f2','--plan-dimension':'#778799','--wall-fill':'#737d8d','--wall-line':'#9ca9bc','--furniture-stroke':'#8794a6','--furniture-fill':'#2b3441','--plant-fill':'#394b40','--plant-stroke':'#758f7c'}:{'--plan-text':'#313b48','--plan-dimension':'#9ba3ae','--wall-fill':'#7f848c','--wall-line':'#525b67','--furniture-stroke':'#939b9f','--furniture-fill':'#fafbf9','--plant-fill':'#f0f5ee','--plant-stroke':'#a0b19c'};
  if(!textures){
   colors['--furniture-fill']='#fff';colors['--plant-fill']='#fff';
@@ -178,6 +178,10 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   content+='</g>';
  }
  if(draft.length)content+=`<polyline points="${draft.map(p=>`${p.x},${p.y}`).join(' ')}" stroke="#2164ff" fill="#2164ff0c" stroke-width=".035" stroke-dasharray=".1 .08" pointer-events="none"/>${draft.map(p=>`<circle cx="${p.x}" cy="${p.y}" r=".055" fill="#2164ff"/>`).join('')}`;
+ if(dimensionDraft){
+  const {a,b,offset}=dimensionDraft;
+  content+=`<g class="dimension-preview" pointer-events="none" style="--plan-text:#2164ff;--plan-dimension:#2164ff">${dimension(a,b,offset)}${[a,b].map(p=>`<circle cx="${p.x}" cy="${p.y}" r="${3*unit}" fill="#2164ff"/>`).join('')}</g>`;
+ }
  if(structurePreview)content+=structureShape(structurePreview,'fill="#2164ff" fill-opacity=".12" stroke="#2164ff" stroke-width="1.3" stroke-dasharray="5 3" vector-effect="non-scaling-stroke" pointer-events="none"');
  if(angleDraft?.length){
   const [vertex,a,b]=angleDraft;

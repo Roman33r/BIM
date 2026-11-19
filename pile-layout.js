@@ -1,20 +1,30 @@
 import {isRoundStructure} from './structures.js';
 
-function axisPositions(min,max,step){
- const center=(min+max)/2,half=(max-min)/2,positions=[min,center,max];
- const count=Math.ceil(half/step)-1;
- if(count>1000)throw new Error('Слишком большая область. Увеличьте шаг свай.');
- for(let i=1;i<=count;i++)positions.push(center-i*step,center+i*step);
- return positions.sort((a,b)=>a-b).filter((value,i,array)=>!i||value-array[i-1]>1e-7);
+function axisPositions(min,max,step,limit){
+ if(max-min<1e-8)return [min];
+ const positions=[min,max],intervals=[[min,max]];
+ for(let i=0;i<intervals.length;i++){
+  const [a,b]=intervals[i];
+  if(b-a<step-1e-8)continue;
+  if(positions.length>=limit)throw new Error('В области больше '+limit+' свай. Увеличьте шаг или уменьшите область.');
+  const center=(a+b)/2;
+  positions.push(center);intervals.push([a,center],[center,b]);
+ }
+ return positions;
 }
 
 export function pileAreaPoints(a,b,step=1.5,limit=2000){
  if(!Number.isFinite(step)||step<.1||step>100)throw new Error('Шаг свай должен быть от 100 до 100 000 мм.');
  if(![a.x,a.y,b.x,b.y].every(Number.isFinite))throw new Error('Некорректные границы области.');
- const xs=axisPositions(Math.min(a.x,b.x),Math.max(a.x,b.x),step);
- const ys=axisPositions(Math.min(a.y,b.y),Math.max(a.y,b.y),step);
+ const xs=axisPositions(Math.min(a.x,b.x),Math.max(a.x,b.x),step,limit);
+ const ys=axisPositions(Math.min(a.y,b.y),Math.max(a.y,b.y),step,limit);
  if(xs.length*ys.length>limit)throw new Error('В области больше '+limit+' свай. Увеличьте шаг или уменьшите область.');
- return ys.flatMap(y=>xs.map(x=>({x,y})));
+ const corners=[],edges=[],inside=[];
+ for(const y of ys)for(const x of xs){
+  const edgeX=x===xs[0]||x===xs[1],edgeY=y===ys[0]||y===ys[1];
+  (edgeX&&edgeY?corners:edgeX||edgeY?edges:inside).push({x,y});
+ }
+ return [...corners,...edges,...inside];
 }
 
 export function selectedPileDimensions(floor,selectedIds){

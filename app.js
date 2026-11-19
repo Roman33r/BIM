@@ -10,6 +10,7 @@ import {angleLabel,angleRadius,angleValue} from './annotations.js';
 import {materialNames} from './materials.js';
 import {STRUCTURE_TYPES,isStructure,isRoundStructure,isPileCap,linkedPileSelection,makeStructure,pileCapFor} from './structures.js';
 import {rulerTicks,segmentMeasurement} from './measurements.js';
+import {canTiltElement,setElementTilt,tiltFields} from './spatial.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
@@ -161,8 +162,8 @@ function structureProperties(e){
 }
 function positionProperties(e,host){
  if(host)return propertyInput('position','От начала стены',Math.round(e.position*1000),{min:0,max:100000,step:1})
-  +'<p class="property-note">Проём перемещается вдоль оси стены.</p>';
- const pos=elementPosition(e),rotatable=!isRoundStructure(e);
+  +'<p class="property-note">Проём перемещается вдоль стены. Наклон задаётся в свойствах стены.</p>';
+ const pos=elementPosition(e),rotatable=!isRoundStructure(e),tiltable=canTiltElement(e);
  const reference=e.mode==='angle'?'Вершина угла':e.a?'Начало элемента':e.points?'Центр по вершинам контура'
   :isRoundStructure(e)||isPileCap(e)?'Центр элемента':'Начальный угол элемента';
  let fields=`<p class="property-note position-reference">${reference}</p>`;
@@ -170,18 +171,24 @@ function positionProperties(e,host){
   +propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000,step:1});
  if(isStructure(e)){
   if(isPileCap(e)&&e.pileId!==undefined){
-   fields+=`<div class="property-row"><span class="field-label">Верх от отметки этажа</span><strong>${fmt(e.elevation*1000)} мм</strong></div><p class="property-note">Оголовок перемещается вместе со сваей. Его низ совпадает с верхом сваи.</p>`;
+   fields+=`<div class="property-row"><span class="field-label">Верх от отметки этажа</span><strong>${fmt(e.elevation*1000)} мм</strong></div><p class="property-note">Оголовок следует за сваей. Углы X и Y задают его дополнительный наклон.</p>`;
   }else fields+=propertyInput('elevation','Верх от отметки этажа',Math.round(e.elevation*1000),{min:-100000,max:isPileCap(e)?130000:100000,step:1});
  }
+ if(rotatable||tiltable)fields+=sectionTitle('Поворот');
+ const degrees={min:-360,max:360,step:.1,unit:'°'};
  if(rotatable){
   const angle=(elementAngle(e)+360)%360;
-  fields+=propertyInput('angle','Угол поворота',Number(angle.toFixed(2))%360,{min:-360,max:360,step:.1,unit:'°'});
-  fields+=`<div class="rotation-controls" aria-label="Поворот на 90 градусов">
-   <button type="button" class="button" data-turn="-90" aria-label="Повернуть на минус 90 градусов">−90°</button>
-   <button type="button" class="button" data-turn="90" aria-label="Повернуть на плюс 90 градусов">+90°</button>
+  fields+=propertyInput('angle','Вокруг Z',Number(angle.toFixed(2))%360,degrees);
+  fields+=`<div class="rotation-controls" aria-label="Поворот вокруг Z на 90 градусов">
+   <button type="button" class="button" data-turn="-90" aria-label="Повернуть вокруг Z на минус 90 градусов">−90°</button>
+   <button type="button" class="button" data-turn="90" aria-label="Повернуть вокруг Z на плюс 90 градусов">+90°</button>
   </div>`;
  }
- fields+=`<p class="property-note">Перетащите элемент или задайте координаты. Стрелки сдвигают на 50 мм, Shift + стрелки — на 500 мм.${rotatable?' Круглая ручка на плане поворачивает элемент.':''}</p>`;
+ if(tiltable){
+  fields+=propertyInput('tiltX','Вокруг X',e.tiltX??0,degrees)+propertyInput('tiltY','Вокруг Y',e.tiltY??0,degrees);
+  fields+='<p class="property-note">X и Y наклоняют элемент в 3D. На плане его проекция видна пунктиром.</p>';
+ }
+ fields+='<p class="property-note">Стрелки сдвигают на 50 мм, Shift + стрелки — на 500 мм.</p>';
  return fields;
 }
 function renderGroupInspector(node){
@@ -278,13 +285,15 @@ function updateProperty(input){
   transferSelection(input.value);
   return;
  }
- const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(key==='angle'?1:1000):input.value.trim();
+ const tilt=tiltFields.includes(key),degrees=key==='angle'||tilt;
+ const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(degrees?1:1000):input.value.trim();
  mutate(()=>{const {element:e,host}=item;
   if(typeof value==='number'){
    if(!Number.isFinite(value))throw new Error('Введите корректное число.');
-   if(input.validity.rangeUnderflow||input.validity.rangeOverflow)throw new Error(`Допустимый диапазон — от ${input.min} до ${input.max} ${key==='angle'?'°':'мм'}.`);
+   if(input.validity.rangeUnderflow||input.validity.rangeOverflow)throw new Error(`Допустимый диапазон — от ${input.min} до ${input.max} ${degrees?'°':'мм'}.`);
   }
   if(key==='angle')setElementAngle(floor(),e.id,value);
+  else if(tilt)setElementTilt(e,key,value);
   else if(key==='x'||key==='y'){const pos=elementPosition(e,host);translateElement(floor(),item.element.id,key==='x'?value-pos.x:0,key==='y'?value-pos.y:0);}
   else if(key==='length'){const old=wallLength(e),dx=(e.b.x-e.a.x)/old,dy=(e.b.y-e.a.y)/old;e.b={x:e.a.x+dx*value,y:e.a.y+dy*value};}else e[key]=value;
   if(host&&!canPlaceOpening(host,e,e.id))throw new Error('Проём выходит за границы стены или пересекает другой проём.');

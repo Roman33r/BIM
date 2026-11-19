@@ -7,7 +7,8 @@ import {icon} from './icons.js';
 import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
-import {STRUCTURE_TYPES,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
+import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
+import {elementTilts} from './spatial.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -17,8 +18,8 @@ export function createScene(container,onSelect,gestures={}){
  marquee.className='selection-marquee';marquee.hidden=true;marquee.setAttribute('aria-hidden','true');
  const rotationButton=document.createElement('button');
  rotationButton.type='button';rotationButton.className='scene-rotation-handle';rotationButton.hidden=true;
- rotationButton.setAttribute('aria-label','Повернуть элемент в 3D');
- rotationButton.title='Потяните, чтобы повернуть элемент';
+ rotationButton.setAttribute('aria-label','Повернуть элемент вокруг Z');
+ rotationButton.title='Потяните для поворота вокруг Z';
  rotationButton.innerHTML=icon('rotate');
  container.append(marquee,rotationButton);
  const hemi=new THREE.HemisphereLight(0xdce9ff,0xb6a18a,1.75);scene.add(hemi);const sun=new THREE.DirectionalLight(0xffffff,2.2);sun.position.set(-5,18,9);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-18,right:18,top:18,bottom:-18,far:60});sun.shadow.bias=-.0005;scene.add(sun);
@@ -123,31 +124,48 @@ export function createScene(container,onSelect,gestures={}){
    mesh.rotation.y=-e.rotation*Math.PI/180;
   }
  }
+ function tiltedLayer(layer,element,support){
+  const tilts=elementTilts(element,support);
+  if(!tilts.length)return layer;
+  let parent=layer,origin=new THREE.Vector3();
+  for(const {pivot,x,y} of tilts.reverse()){
+   const center=new THREE.Vector3(pivot.x-6,pivot.z,pivot.y-4.5),node=new THREE.Group();
+   node.position.copy(center).sub(origin);
+   // Three.js uses Y as vertical, with the plan's Y along its Z axis.
+   node.rotation.set(-x,0,-y,'ZXY');
+   parent.add(node);parent=node;origin=center;
+  }
+  const geometryLayer=new THREE.Group();
+  geometryLayer.position.copy(origin).negate();parent.add(geometryLayer);
+  return geometryLayer;
+ }
  function buildLevel(layer,floor,ids,opts,annotate){
   const heightLimit=1.15,textured=opts.textures!==false;
-  for(const slab of floor.slabs)extrudedPlate(layer,slab.points,slab.thickness,0,material(slab.material,ids.has(slab.id),textured),slab.id);
-  for(const e of floor.structures||[])buildStructure(layer,e,ids.has(e.id),textured);
+  for(const slab of floor.slabs)extrudedPlate(tiltedLayer(layer,slab),slab.points,slab.thickness,0,material(slab.material,ids.has(slab.id),textured),slab.id);
+  const structures=floor.structures||[],structuresById=new Map(structures.map(e=>[e.id,e]));
+  for(const e of structures)buildStructure(tiltedLayer(layer,e,isPileCap(e)?structuresById.get(e.pileId):undefined),e,ids.has(e.id),textured);
 
   for(const wall of floor.walls){
    const mat=material(wall.material,ids.has(wall.id),textured),h=section?Math.min(wall.height,heightLimit):wall.height;
-   for(const {start,end,bottom,top} of wallBlocks(wall,h))localBox(layer,wall,start,end,bottom,top,mat,wall.id);
+   const wallLayer=tiltedLayer(layer,wall);
+   for(const {start,end,bottom,top} of wallBlocks(wall,h))localBox(wallLayer,wall,start,end,bottom,top,mat,wall.id);
    for(const o of wall.openings){
     if(o.sill>=h)continue;
     const isSelected=ids.has(o.id);
     if(o.kind==='doorway'){
-     if(annotate)buildEmptyDoorway(layer,wall,o,h,isSelected);
-    }else if(o.kind==='door')buildDoor(layer,wall,o,h,isSelected,textured);
+     if(annotate)buildEmptyDoorway(wallLayer,wall,o,h,isSelected);
+    }else if(o.kind==='door')buildDoor(wallLayer,wall,o,h,isSelected,textured);
     else{
      const [start,end]=openingSpan(o),top=Math.min(o.sill+o.height,h);
      const pane=isSelected?selectedMat:textured?glass:plainGlass,trim=textured?frame:plain;
-     localBox(layer,wall,start,end,o.sill,top,pane,o.id);
-     for(const x of [start,end-.045])localBox(layer,wall,x,x+.045,o.sill,top,trim,o.id,.06);
-     localBox(layer,wall,start,end,o.sill,Math.min(o.sill+.04,top),trim,o.id,.06);
-     if(o.sill+o.height<=h)localBox(layer,wall,start,end,top-.04,top,trim,o.id,.06);
+     localBox(wallLayer,wall,start,end,o.sill,top,pane,o.id);
+     for(const x of [start,end-.045])localBox(wallLayer,wall,x,x+.045,o.sill,top,trim,o.id,.06);
+     localBox(wallLayer,wall,start,end,o.sill,Math.min(o.sill+.04,top),trim,o.id,.06);
+     if(o.sill+o.height<=h)localBox(wallLayer,wall,start,end,top-.04,top,trim,o.id,.06);
     }
    }
   }
-  for(const item of floor.furniture)buildFurniture(THREE,layer,item,ids.has(item.id)?selectedMat:textured?null:plain);
+  for(const item of floor.furniture)buildFurniture(THREE,tiltedLayer(layer,item),item,ids.has(item.id)?selectedMat:textured?null:plain);
   if(!annotate)return;
   for(const room of floor.rooms){
    const frame=elementFrame(room);if(opts.labels!==false)label(layer,room.name,frame.center.x,.12,frame.center.y,room.id,ids.has(room.id));
@@ -214,6 +232,7 @@ export function createScene(container,onSelect,gestures={}){
    }
   }
   const guideBounds=new THREE.Box3().setFromObject(group);
+  if(!guideBounds.isEmpty())ground.position.y=Math.min(ground.position.y,guideBounds.min.y-.08);
   for(const guide of opts.feedback?.guides||[]){let a=guide.a,b=guide.b;if(guide.component==='x'){a={x:guide.a.x,y:guideBounds.min.z+3.5};b={x:guide.a.x,y:guideBounds.max.z+5.5};}if(guide.component==='y'){a={x:guideBounds.min.x+5,y:guide.a.y};b={x:guideBounds.max.x+7,y:guide.a.y};}guideLine(a,b,guide.axis?0x2696ad:0xbc43c5);}
   scene.background=new THREE.Color(dark?0x1b2028:0xf7f8fa);ground.material.color.set(dark?0x202833:0xf3f5f7);if(fit)fitCamera();dirty=true;
  }

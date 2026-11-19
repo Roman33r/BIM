@@ -2,6 +2,7 @@ import {migrateElements,FURNITURE_TYPES,listElements} from './elements.js';
 import {isSimplePolygon} from './transforms.js';
 import {angleValue} from './annotations.js';
 import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structures.js';
+import {canTiltElement,tiltFields} from './spatial.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -103,7 +104,10 @@ export function validateProject(value){
    capped.add(e.pileId);
   }
   syncPileCaps(f);
-  for(const e of listElements(f))if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
+  for(const e of listElements(f)){
+   if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
+   for(const key of tiltFields)if(e[key]!==undefined&&(!canTiltElement(e)||!num(e[key],-180,180)))fail();
+  }
  }
  return value;
 }

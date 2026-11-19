@@ -7,6 +7,7 @@ import {hiddenWallEnds} from './wall-overlaps.js';
 import {materialPatterns,materialSpec} from './materials.js';
 import {isPileCap,isRoundStructure,pileFootprintDiameter} from './structures.js';
 import {segmentMeasurement} from './measurements.js';
+import {floorTiltProjections} from './spatial.js';
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const n=value=>Number(value.toFixed(4));
 const path=(d,attrs='')=>`<path d="${d}" ${attrs}/>`;
@@ -66,6 +67,7 @@ function floorReference(floor,color){
   const f=elementFrame(element);
   outlines+=close([[0,0],[f.w,0],[f.w,f.h],[0,f.h]].map(([x,y])=>framePoint(f,x,y)));
  }
+ for(const contour of floorTiltProjections(floor).values())outlines+=close(contour);
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
 export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,measurement,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
@@ -113,6 +115,14 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  }
  for(const end of hidden)content+=`<g class="hidden-wall-end" data-hidden-wall="${esc(end.id)}" fill="none" stroke="${dark?'#e6e9f0':'#263751'}" stroke-dasharray="3 2" stroke-width="1.1" pointer-events="none">${end.strokes.map(points=>trace(points,'vector-effect="non-scaling-stroke"')).join('')}</g>`;
  for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
+ for(const [id,contour] of floorTiltProjections(floor)){
+  const stroke=selectedIds.has(id)?(dark?'#bfa6ff':'#6442ae'):(dark?'#a69ac2':'#786789');
+  const outline=[...contour,contour[0]];
+  content+=`<g class="tilt-projection movable-element" data-element="${esc(id)}" fill="none">
+   ${trace(outline,`stroke="${stroke}" stroke-width="${selectedIds.has(id)?2:1.3}" stroke-dasharray="6 4" vector-effect="non-scaling-stroke" pointer-events="none"`)}
+   ${interactive?trace(outline,'stroke="transparent" stroke-width="6" vector-effect="non-scaling-stroke" pointer-events="stroke"'):''}
+  </g>`;
+ }
  if(labels)for(const r of floor.rooms){const {center:{x,y}}=elementFrame(r);content+=`<g fill="${selectedIds.has(r.id)?'#2164ff':'var(--plan-text)'}" text-anchor="middle" data-element="${esc(r.id)}" class="movable-element">${rect(x-1,y-.25,2,.65,'fill="transparent"')}${text(x,y,r.name,'font-size=".205" font-weight="550"')}${text(x,y+.29,`${(r.w*r.h).toLocaleString('ru-RU',{maximumFractionDigits:1})} м²`,'font-size=".175"')}</g>`;}
  if(dimensions)for(const d of floor.dimensions){
   content+=`<g data-element="${esc(d.id)}" class="movable-element" ${selectedIds.has(d.id)?'style="--plan-text:#2164ff;--plan-dimension:#2164ff"':''}>`;
@@ -138,6 +148,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
 export function planBounds(floor,referenceFloors=[]){
  const points=[];
  for(const level of [floor,...referenceFloors]){
+  for(const contour of floorTiltProjections(level).values())points.push(...contour);
   for(const e of level.structures||[])points.push(...elementFootprint(e));
   for(const wall of level.walls)points.push(wall.a,wall.b);for(const s of level.slabs)points.push(...s.points);
   for(const e of level.furniture){const angle=e.rotation*Math.PI/180;for(const [x,y] of [[0,0],[e.w,0],[e.w,e.d],[0,e.d]])points.push({x:e.x+x*Math.cos(angle)-y*Math.sin(angle),y:e.y+x*Math.sin(angle)+y*Math.cos(angle)});}

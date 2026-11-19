@@ -1,6 +1,7 @@
 import {elementFrame, elementFootprint, add, mul} from './transforms.js';
 import {angleGeometry} from './annotations.js';
 import {FLOOR_COLLECTIONS} from './elements.js';
+import {floorTiltProjections} from './spatial.js';
 
 export const AXIS_TYPES = Object.freeze({
  wall:'Стены', doorway:'Дверные проёмы', door:'Двери', window:'Окна', slab:'Перекрытия',
@@ -75,9 +76,11 @@ function outline(element, host) {
 }
 
 export function selectInPlan(floor, box, options={}) {
- const ids=[];
+ const ids=[],projections=floorTiltProjections(floor);
  for (const {element,host} of floorElements(floor)) {
-  if (elementVisible(element,options) && matchesOutline(outline(element,host),box)) ids.push(element.id);
+  if(!elementVisible(element,options))continue;
+  const projected=projections.get(element.id);
+  if(matchesOutline(outline(element,host),box)||projected&&matchesOutline(projected,box))ids.push(element.id);
  }
  return ids;
 }

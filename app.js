@@ -9,7 +9,7 @@ import {AXIS_TYPES,extendSelection,selectInPlan,selectionBounds,showSelectionBox
 import {angleLabel,angleRadius,angleValue} from './annotations.js';
 import {materialNames} from './materials.js';
 import {STRUCTURE_TYPES,isStructure,isRoundStructure,isPileCap,linkedPileSelection,makeStructure,pileCapFor} from './structures.js';
-import {rulerTicks,segmentMeasurement} from './measurements.js';
+import {endpointAtLength,rulerTicks,segmentMeasurement} from './measurements.js';
 import {canTiltElement,setElementTilt,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
 import {pileAreaPoints} from './pile-layout.js';
@@ -26,6 +26,7 @@ let structureType='pile';
 let constructionType='dashed';
 let pileArea=null,pileAreaType='screwPile',pileSpacing=1.5;
 let measuredLine=null;
+let numericDirection=null;
 let inspectorTab='geometry';
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
@@ -93,17 +94,49 @@ function zoom(factor,center){
 function pixelUnit(){return 1/($('plan-svg').getScreenCTM()?.a||50);}
 function renderPlanView(){
  updateViewBox();
- const points=draft.length?[...draft,...(hover?[hover]:[])]:[];
+ const start=drawingStart();
+ if(start&&!numericDirection)numericDirection={x:start.x+1,y:start.y};
+ const effectiveHover=start&&drawLengthValue()!==null?endpointAtLength(start,hover||numericDirection,drawLengthValue()):hover;
+ const points=draft.length?[...draft,...(effectiveHover?[effectiveHover]:[])]:[];
  let structurePreview;
- if(tool==='structure'&&hover){
+ if(tool==='structure'&&effectiveHover){
   const shape=STRUCTURE_TYPES[structureType].shape;
-  if(shape==='round'||shape==='rect')structurePreview=makeStructure(structureType,'',[hover]);
+  if(shape==='round'||shape==='rect')structurePreview=makeStructure(structureType,'',[effectiveHover]);
   else if(shape==='line'&&points.length===2)structurePreview=makeStructure(structureType,'',points);
  }
  const measurement=tool==='measure'
-  ?(draft.length&&hover?{a:draft[0],b:hover}:measuredLine?.floorId===floorId?measuredLine:null):null;
+  ?(draft.length&&effectiveHover?{a:draft[0],b:effectiveHover}:measuredLine?.floorId===floorId?measuredLine:null):null;
+ const drawMeasurement=start&&effectiveHover&&tool!=='measure'?{a:start,b:effectiveHover}:null;
  renderMeasurement(measurement);
- $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea}).content;
+ renderDrawingInput(start,drawMeasurement);
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea,drawMeasurement}).content;
+}
+function drawingStart(){
+ if(!draft.length)return null;
+ if(['wall','dimension','room','slab','measure','angle'].includes(tool))return tool==='angle'?draft[0]:draft.at(-1);
+ if(tool==='construction'&&constructionType!=='point')return draft[0];
+ if(tool==='structure'&&['line','contour'].includes(STRUCTURE_TYPES[structureType].shape))return draft.at(-1);
+ return null;
+}
+function drawLengthValue(){
+ const value=$('draw-length').value.trim().replace(',','.');
+ const parsed=Number(value)/1000;
+ return value&&Number.isFinite(parsed)&&parsed>0?parsed:null;
+}
+function renderDrawingInput(start,measurement){
+ const form=$('draw-length-form');form.hidden=!start;
+ if(!start){$('draw-length').value='';numericDirection=null;return;}
+ $('draw-length').placeholder=measurement?String(Math.round(segmentMeasurement(measurement.a,measurement.b).distance*1000)):'Введите длину';
+}
+function commitDrawingLength(){
+ const start=drawingStart(),value=drawLengthValue();
+ if(!start||value===null){toast('Введите длину больше нуля в миллиметрах.');return;}
+ const max=tool==='wall'||tool==='structure'&&STRUCTURE_TYPES[structureType].shape==='line'?100:2000;
+ if(value>max){toast('Максимальная длина — '+fmt(max*1000)+' мм.');return;}
+ const endpoint=endpointAtLength(start,numericDirection||{x:start.x+1,y:start.y},value);
+ $('draw-length').value='';numericDirection=null;hover=null;editorFeedback={};
+ choosePoint(endpoint,{target:$('plan-svg'),detail:1,altKey:true});
+ renderPlanView();
 }
 function renderMeasurement(measurement){
  const panel=$('measure-result');
@@ -332,7 +365,7 @@ function updateToolHint(){
  $('tool-status').textContent=tool==='select'?'Выбор элементов':hint;
 }
 function setTool(next){
- tool=next;draft=[];hover=null;pileArea=null;measuredLine=null;editorFeedback={};
+ tool=next;draft=[];hover=null;numericDirection=null;$('draw-length').value='';pileArea=null;measuredLine=null;editorFeedback={};
  $('construction-button').classList.toggle('active',next==='construction');
  $('construction-button').setAttribute('aria-pressed',String(next==='construction'));
  $$('[data-tool], [data-structure-category]').forEach(button=>{
@@ -349,6 +382,8 @@ function snapped(point,event){let p={x:point.x,y:point.y};editorFeedback={};
   if(!editorFeedback.label&&preferences.gridSnap)p=snapToGrid(p,preferences.gridStep);
  }
  if(event.shiftKey&&draft.length){const start=tool==='angle'?draft[0]:draft[draft.length-1];if(Math.abs(p.x-start.x)>Math.abs(p.y-start.y))p.y=start.y;else p.x=start.x;}
+ const start=drawingStart();
+ if(start){numericDirection={...p};const requested=drawLengthValue();if(requested!==null){p=endpointAtLength(start,p,requested);editorFeedback={};}}
  return p;}
 
 function changeDoor(id,installed){
@@ -382,6 +417,7 @@ function addDoorway(wall,distance){
  $('doorway-width').select();
 }
 function choosePoint(p,event){
+ $('draw-length').value='';numericDirection=null;
  if(tool==='construction'){
   if(event.detail>1)return;
   if(constructionType!=='point'&&!draft.length){draft=[p];hover=null;updateToolHint();renderPlanView();return;}
@@ -847,6 +883,15 @@ $('settings-button').onclick=()=>{
  };
 };
 const surface=$('drawing-surface');
+$('draw-length-form').onsubmit=event=>{
+ event.preventDefault();commitDrawingLength();$('plan-svg').focus({preventScroll:true});
+};
+$('draw-length').addEventListener('input',()=>renderPlanView());
+$('draw-length').addEventListener('keydown',event=>{
+ if(event.key==='Escape'){
+  event.preventDefault();event.stopPropagation();$('draw-length').value='';$('plan-svg').focus({preventScroll:true});renderPlanView();
+ }
+});
 new ResizeObserver(()=>renderPlanView()).observe(surface);
 surface.addEventListener('contextmenu',event=>{
  event.preventDefault();
@@ -924,6 +969,9 @@ surface.addEventListener('lostpointercapture',()=>{if(marquee||movement||pan||pi
 surface.addEventListener('dblclick',()=>{if(drawingContour())finishContour();});
 surface.addEventListener('wheel',event=>{event.preventDefault();zoom(Math.exp(Math.max(-100,Math.min(100,event.deltaY))*.0017),worldPoint(event));},{passive:false});
 document.addEventListener('keydown',event=>{
+ if(!event.ctrlKey&&!event.metaKey&&!event.altKey&&!$('modal').open&&!event.target.closest('input,select,textarea')&&drawingStart()&&/^[0-9.,]$/.test(event.key)){
+  event.preventDefault();const input=$('draw-length');input.value=event.key==='.'||event.key===','?'0.':event.key;input.focus({preventScroll:true});renderPlanView();return;
+ }
  if(event.target.closest('input,select,textarea')||$('modal').open)return;
  if(pileArea&&(event.key==='Escape'||(event.ctrlKey||event.metaKey)&&event.code==='KeyZ')){
   event.preventDefault();pileArea=null;editorFeedback={};updateToolHint();renderPlanView();return;

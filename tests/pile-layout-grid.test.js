@@ -36,6 +36,6 @@ test('selected pile sizes measure shaft extents, center distances and slope inde
 test('configured grid uses its own snap spacing and can be hidden separately',()=>{
  assert.deepEqual(snapToGrid({x:1.17,y:-.83},.5),{x:1,y:-1});
  const floor=createEmptyProject().floors[0];
- assert.match(renderPlan(floor,{gridStep:.5,unit:.01}).content,/id="dots" width="0.5" height="0.5"/);
- assert.doesNotMatch(renderPlan(floor,{grid:false}).content,/fill="url\(#dots\)"/);
+ assert.match(renderPlan(floor,{gridStep:.5,unit:.01}).content,/id="grid-minor" width="0.5" height="0.5"/);
+ assert.doesNotMatch(renderPlan(floor,{grid:false}).content,/fill="url\(#grid-major\)"/);
 });

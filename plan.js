@@ -109,17 +109,21 @@ function floorReference(floor,color){
  for(const contour of floorTiltProjections(floor).values())outlines+=close(contour);
  return `<g class="reference-floor" data-reference-floor="${esc(floor.id)}" pointer-events="none" stroke="${color}" fill="none" stroke-width=".026" stroke-dasharray=".08 .07" opacity=".65">${outlines}</g>`;
 }
-export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,measurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
+export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[selectedId]:[]),grid=true,gridStep=.25,labels=true,dimensions=true,dark=false,textures=true,draft=[],angleDraft,structurePreview,measurement,drawMeasurement,pileArea,referenceFloors=[],interactive=false,axes=false,axisTypes,unit=.02,feedback={},bounds}={}){
  const colors=dark?{'--plan-text':'#dce5f2','--plan-dimension':'#778799','--wall-fill':'#737d8d','--wall-line':'#9ca9bc','--furniture-stroke':'#8794a6','--furniture-fill':'#2b3441','--plant-fill':'#394b40','--plant-stroke':'#758f7c'}:{'--plan-text':'#313b48','--plan-dimension':'#9ba3ae','--wall-fill':'#7f848c','--wall-line':'#525b67','--furniture-stroke':'#939b9f','--furniture-fill':'#fafbf9','--plant-fill':'#f0f5ee','--plant-stroke':'#a0b19c'};
  if(!textures){
   colors['--furniture-fill']='#fff';colors['--plant-fill']='#fff';
   colors['--wall-line']='#667282';
  }
  const tilePattern=textures?`<pattern id="tiles" width=".28" height=".28" patternUnits="userSpaceOnUse"><path d="M.28 0H0V.28" fill="none" stroke="${dark?'#3c4652':'#e1e5e7'}" stroke-width=".012"/></pattern>`+materialPatterns(dark):'';
- const cell=validGridStep(gridStep)?gridStep:.25,visualCell=cell*Math.max(1,Math.ceil(5*unit/cell));
- const defs=`<defs><pattern id="dots" width="${visualCell}" height="${visualCell}" patternUnits="userSpaceOnUse"><circle cx="0" cy="0" r="${Math.min(unit,cell*.12)}" fill="${dark?'#3e4857':'#dce2eb'}"/></pattern>${tilePattern}</defs>`;
+ const cell=validGridStep(gridStep)?gridStep:.25,visualCell=cell*10**Math.max(0,Math.ceil(Math.log10(9*unit/cell)));
+ const major=visualCell*5,minorColor=dark?'#354150':'#d5dce6',majorColor=dark?'#526276':'#aebbcf';
+ const defs=`<defs>
+  <pattern id="grid-minor" width="${visualCell}" height="${visualCell}" patternUnits="userSpaceOnUse"><path d="M${visualCell} 0H0V${visualCell}" fill="none" stroke="${minorColor}" stroke-width=".65" vector-effect="non-scaling-stroke"/></pattern>
+  <pattern id="grid-major" width="${major}" height="${major}" patternUnits="userSpaceOnUse"><rect width="${major}" height="${major}" fill="url(#grid-minor)"/><path d="M${major} 0H0V${major}" fill="none" stroke="${majorColor}" stroke-width="1.15" vector-effect="non-scaling-stroke"/></pattern>
+  ${tilePattern}</defs>`;
  const surfaceFill=material=>textures?`url(#material-${materialSpec(material).id})`:'#fff';
- let content=grid?rect(bounds?.x??-1000,bounds?.y??-1000,bounds?.w??2000,bounds?.h??2000,'fill="url(#dots)"'):'';
+ let content=grid?rect(-10000,-10000,20000,20000,'fill="url(#grid-major)"'):'';
  for(const slab of floor.slabs)content+=`<polygon points="${coords(slab.points)}" fill="${surfaceFill(slab.material)}" fill-opacity="${textures?(dark?.28:.24):1}" stroke="${selectedIds.has(slab.id)?'#2164ff':dark?'#526071':'#b5bec8'}" stroke-width="${selectedIds.has(slab.id)?.045:.015}" data-element="${esc(slab.id)}" class="movable-element"/>`;
  for(const reference of referenceFloors)content+=floorReference(reference,reference.elevation>=floor.elevation?(dark?'#7ca6e7':'#678acc'):(dark?'#c49bd5':'#a16eb8'));
  const structures=floor.structures||[];
@@ -186,10 +190,14 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  if(dimensions&&interactive)content+=pileSelectionOverlay(floor,selectedIds,unit);
  if(pileArea){
   const x=Math.min(pileArea.a.x,pileArea.b.x),y=Math.min(pileArea.a.y,pileArea.b.y);
-  content+=rect(x,y,Math.abs(pileArea.b.x-pileArea.a.x),Math.abs(pileArea.b.y-pileArea.a.y),'class="pile-area-preview" fill="#2164ff" fill-opacity=".06" stroke="#2164ff" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke" pointer-events="none"');
+  const width=Math.abs(pileArea.b.x-pileArea.a.x),height=Math.abs(pileArea.b.y-pileArea.a.y),mm=value=>Math.round(value*1000).toLocaleString('ru-RU');
+  content+=rect(x,y,width,height,'class="pile-area-preview" fill="#2164ff" fill-opacity=".06" stroke="#2164ff" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke" pointer-events="none"');
+  content+=text(x+width/2,y-12*unit,`${mm(width)} × ${mm(height)} мм`,'class="editor-measure pile-area-size" fill="#2164ff" font-size="'+(12*unit)+'" text-anchor="middle"');
+  content+=text(x+width+9*unit,y+height/2,`${mm(height)} мм`,'class="editor-measure" fill="#2164ff" font-size="'+(11*unit)+'"');
   for(const p of pileArea.points)content+=`<circle cx="${p.x}" cy="${p.y}" r="${4*unit}" fill="#2164ff" pointer-events="none"/>`;
  }
  if(measurement)content+=measurementOverlay(measurement,unit,dark);
+ if(drawMeasurement)content+=measurementOverlay(drawMeasurement,unit,dark);
  return {content:defs+`<g style="${Object.entries(colors).map(([k,v])=>k+':'+v).join(';')}" font-family="Segoe UI,Arial,sans-serif">${content}</g>`};
 }
 export function planBounds(floor,referenceFloors=[]){

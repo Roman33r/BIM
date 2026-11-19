@@ -8,6 +8,7 @@ import {materialPatterns,materialSpec} from './materials.js';
 import {isPileCap,isRoundStructure,pileFootprintDiameter} from './structures.js';
 import {segmentMeasurement} from './measurements.js';
 import {floorTiltProjections} from './spatial.js';
+import {guidePoints,guideDash} from './construction-guides.js';
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const n=value=>Number(value.toFixed(4));
 const path=(d,attrs='')=>`<path d="${d}" ${attrs}/>`;
@@ -20,6 +21,25 @@ function dimension(a,b,offset=0.6){
 }
 const coords=points=>points.map(p=>`${n(p.x)},${n(p.y)}`).join(' ');
 const trace=(points,attrs='')=>`<polyline points="${coords(points)}" ${attrs}/>`;
+function constructionPlan(floor,selectedIds,unit){
+ let output='';
+ for(const e of floor.construction||[]){
+  const selected=selectedIds.has(e.id),color=selected?'#2164ff':'#bb7c31',points=guidePoints(e);
+  output+=`<g data-element="${esc(e.id)}" data-guide-type="${e.type}" class="movable-element" stroke="${color}" fill="none">`;
+  if(e.type==='line'){
+   output+=trace([e.a,e.b],`stroke-dasharray="${guideDash(e.style)}" stroke-width="${selected?2:1.2}" vector-effect="non-scaling-stroke"`);
+   output+=trace([e.a,e.b],'stroke="transparent" stroke-width="10" vector-effect="non-scaling-stroke"');
+  }
+  for(const p of points){
+   const radius=(e.type==='point'?5:3)*unit;
+   output+=`<circle cx="${p.x}" cy="${p.y}" r="${radius}" fill="var(--canvas,#fff)" stroke-width="1.3" vector-effect="non-scaling-stroke"/>`;
+   if(e.type==='point')output+=path(`M${p.x-9*unit} ${p.y}h${18*unit}M${p.x} ${p.y-9*unit}v${18*unit}`,'stroke-width="1" vector-effect="non-scaling-stroke"')
+    +`<circle cx="${p.x}" cy="${p.y}" r="${11*unit}" fill="transparent" stroke="none"/>`;
+  }
+  output+='</g>';
+ }
+ return output;
+}
 function structureShape(element,attrs=''){
  if(isRoundStructure(element))return `<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(pileFootprintDiameter(element)/2)}" ${attrs}/>`;
  return `<polygon points="${coords(elementFootprint(element))}" ${attrs}/>`;
@@ -141,6 +161,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
   const radius=b?angleRadius(vertex,a,b):0;
   content+=`<g pointer-events="none" style="--plan-text:#2164ff;--plan-dimension:#2164ff">${mark}${b?angularDimension({vertex,a,b,radius},false):a?trace([vertex,a],'stroke="#2164ff" stroke-width=".024"'):''}</g>`;
  }
+ content+=constructionPlan(floor,selectedIds,unit);
  content+=editorOverlay(floor,{selectedId,axes,axisTypes,labels,dimensions,interactive,unit,feedback,bounds});
  if(measurement)content+=measurementOverlay(measurement,unit,dark);
  return {content:defs+`<g style="${Object.entries(colors).map(([k,v])=>k+':'+v).join(';')}" font-family="Segoe UI,Arial,sans-serif">${content}</g>`};
@@ -148,6 +169,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
 export function planBounds(floor,referenceFloors=[]){
  const points=[];
  for(const level of [floor,...referenceFloors]){
+  for(const e of level.construction||[])points.push(...guidePoints(e));
   for(const contour of floorTiltProjections(level).values())points.push(...contour);
   for(const e of level.structures||[])points.push(...elementFootprint(e));
   for(const wall of level.walls)points.push(wall.a,wall.b);for(const s of level.slabs)points.push(...s.points);

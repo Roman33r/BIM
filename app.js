@@ -11,6 +11,7 @@ import {materialNames} from './materials.js';
 import {STRUCTURE_TYPES,isStructure,isRoundStructure,isPileCap,linkedPileSelection,makeStructure,pileCapFor} from './structures.js';
 import {rulerTicks,segmentMeasurement} from './measurements.js';
 import {canTiltElement,setElementTilt,tiltFields} from './spatial.js';
+import {GUIDE_STYLES} from './construction-guides.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
@@ -20,6 +21,7 @@ let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid
 try{({project,projects}=loadProjects(localStorage));const prefs=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}');for(const k of Object.keys(preferences))if(typeof prefs[k]==='boolean'&&k!=='axisTypes')preferences[k]=prefs[k];for(const kind of Object.keys(AXIS_TYPES))if(prefs.axisTypes?.[kind]===false)preferences.axisTypes[kind]=false;}catch{loadWarning='Не удалось прочитать локальное сохранение. Открыт пример; исходное сохранение не изменено.';}
 let floorId=project.floors[0].id,tool='select',view='plan',draft=[],hover=null,pan=null,spaceHeld=false,section=false,scene=null,scenePromise=null;
 let structureType='pile';
+let constructionType='dashed';
 let measuredLine=null;
 let inspectorTab='geometry';
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
@@ -163,9 +165,9 @@ function structureProperties(e){
 function positionProperties(e,host){
  if(host)return propertyInput('position','От начала стены',Math.round(e.position*1000),{min:0,max:100000,step:1})
   +'<p class="property-note">Проём перемещается вдоль стены. Наклон задаётся в свойствах стены.</p>';
- const pos=elementPosition(e),rotatable=!isRoundStructure(e),tiltable=canTiltElement(e);
+ const pos=elementPosition(e),rotatable=!isRoundStructure(e)&&!(e.kind==='guide'&&e.type==='point'),tiltable=canTiltElement(e);
  const reference=e.mode==='angle'?'Вершина угла':e.a?'Начало элемента':e.points?'Центр по вершинам контура'
-  :isRoundStructure(e)||isPileCap(e)?'Центр элемента':'Начальный угол элемента';
+  :e.kind==='guide'?'Опорная точка':isRoundStructure(e)||isPileCap(e)?'Центр элемента':'Начальный угол элемента';
  let fields=`<p class="property-note position-reference">${reference}</p>`;
  fields+=propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000,step:1})
   +propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000,step:1});
@@ -238,6 +240,13 @@ function renderInspector(){
  <div class="inspector-tabs" role="group" aria-label="Разделы свойств">${tabs.map(([key,label])=>`<button type="button" data-inspector-tab="${key}" aria-pressed="${inspectorTab===key}">${label}</button>`).join('')}</div>
  <section class="property-section" ${inspectorTab==='geometry'?'':'hidden'}>`;
  if(e.kind==='wall')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+propertyInput('height','Высота',Math.round(e.height*1000),{min:1000,max:15000})+propertyInput('length','Длина',Math.round(wallLength(e)*1000),{min:200,max:100000});
+ else if(e.kind==='guide'){
+  if(e.type==='line')body+=propertyInput('length','Длина линии',Math.round(wallLength(e)*1000),{min:10,max:3000000,step:1})
+   +`<div class="property-row"><label for="property-style">Тип линии</label><select id="property-style" data-property="style">${Object.entries(GUIDE_STYLES).map(([key,label])=>`<option value="${key}" ${e.style===key?'selected':''}>${label}</option>`).join('')}</select></div>`
+   +propertyInput('divisions','Число отрезков',e.divisions,{min:1,max:100,step:1,unit:'шт.'})
+   +'<p class="property-note">Точки деления служат привязками. Например, 4 отрезка дают 3 внутренние точки.</p>';
+  else body+='<p class="property-note">Опорная точка участвует в привязке и выравнивании. Задайте её координаты во вкладке «Положение».</p>';
+ }
  else if(isStructure(e))body+=structureProperties(e);
  else if(host)body+=propertyInput('width','Ширина проёма',Math.round(e.width*1000),{min:300,max:10000,step:1})+propertyInput('height','Высота проёма',Math.round(e.height*1000),{min:300,max:15000,step:1})+propertyInput('sill','Отметка низа',Math.round(e.sill*1000),{min:0,max:15000,step:1});
  else if(e.kind==='slab')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(polygonArea(e.points),2)} м²</span></div>`;
@@ -256,7 +265,7 @@ function renderInspector(){
  body+='</section>';
  body+=`<section class="property-section" ${inspectorTab==='position'?'':'hidden'}>${positionProperties(e,host)}</section>`;
  if(e.kind==='wall')body+=`<section class="property-section">${sectionTitle('Конструкция')}<div class="property-row"><label for="property-loadBearing">Несущая стена</label><input class="toggle" id="property-loadBearing" data-property="loadBearing" type="checkbox" ${e.loadBearing?'checked':''}></div><div class="property-row"><span class="field-label">Проёмы</span><span class="value-muted">${e.openings.length}</span></div><div class="property-row"><span class="field-label">Объём брутто</span><span class="value-muted">${fmt(wallLength(e)*e.thickness*e.height,2)} м³</span></div></section>`;
- body+=`<section class="property-section">${sectionTitle('Привязки')}<div class="property-row"><label for="property-showAxes">Оси симметрии</label><input class="toggle" id="property-showAxes" data-property="showAxes" type="checkbox" ${e.showAxes!==false?'checked':''}></div><p class="property-note">Квадратные ручки меняют размеры на плане. Alt временно отключает привязки.</p></section>`;
+ if(e.kind!=='guide')body+=`<section class="property-section">${sectionTitle('Привязки')}<div class="property-row"><label for="property-showAxes">Оси симметрии</label><input class="toggle" id="property-showAxes" data-property="showAxes" type="checkbox" ${e.showAxes!==false?'checked':''}></div><p class="property-note">Квадратные ручки меняют размеры на плане. Alt временно отключает привязки.</p></section>`;
  body+=`<section class="property-section">${sectionTitle('Идентификация')}<label class="element-name-label" for="element-name">Название</label><input id="element-name" class="element-name-input" data-property="name" type="text" maxlength="100" value="${escapeHTML(e.name)}"><p class="property-note">${e.kind==='wall'?'Стена перемещается вместе со своими дверями и окнами.':'Параметры и положение сохраняются в проекте.'}</p></section>`;
  node.innerHTML=body;hydrateIcons(node);
  node.querySelectorAll('[data-inspector-tab]').forEach(button=>button.onclick=()=>{
@@ -286,11 +295,11 @@ function updateProperty(input){
   return;
  }
  const tilt=tiltFields.includes(key),degrees=key==='angle'||tilt;
- const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(degrees?1:1000):input.value.trim();
+ const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(degrees||key==='divisions'?1:1000):input.value.trim();
  mutate(()=>{const {element:e,host}=item;
   if(typeof value==='number'){
    if(!Number.isFinite(value))throw new Error('Введите корректное число.');
-   if(input.validity.rangeUnderflow||input.validity.rangeOverflow)throw new Error(`Допустимый диапазон — от ${input.min} до ${input.max} ${degrees?'°':'мм'}.`);
+   if(input.validity.rangeUnderflow||input.validity.rangeOverflow)throw new Error(`Допустимый диапазон — от ${input.min} до ${input.max} ${degrees?'°':key==='divisions'?'шт.':'мм'}.`);
   }
   if(key==='angle')setElementAngle(floor(),e.id,value);
   else if(tilt)setElementTilt(e,key,value);
@@ -308,6 +317,7 @@ function updateToolHint(){
  if(tool==='select'&&!listElements(floor()).length)hint='Пустой этаж · Выберите «Стена», «Плита» или добавьте мебель';
  if(tool==='slab')hint=`${floorLabel(floor())} · ${hint}`;
  if(tool==='angle')hint=['Укажите вершину угла','Укажите точку на первом луче','Укажите точку на втором луче'][draft.length];
+ if(tool==='construction')hint=constructionType==='point'?'Укажите опорную точку для привязки':draft.length?'Укажите конец вспомогательной линии':'Укажите начало вспомогательной линии · Shift — ортогонально';
  if(tool==='measure')hint=draft.length?'Линейка · Укажите вторую точку · Shift выравнивает замер'
   :measuredLine?.floorId===floorId?'Линейка · Щёлкните для нового замера · Esc закрывает замер':'Линейка · Укажите первую точку · Esc закрывает замер';
  if(tool==='structure'){
@@ -319,6 +329,8 @@ function updateToolHint(){
 }
 function setTool(next){
  tool=next;draft=[];hover=null;measuredLine=null;editorFeedback={};
+ $('construction-button').classList.toggle('active',next==='construction');
+ $('construction-button').setAttribute('aria-pressed',String(next==='construction'));
  $$('[data-tool], [data-structure-category]').forEach(button=>{
   const active=button.dataset.tool===next||next==='structure'&&button.dataset.structureCategory===STRUCTURE_TYPES[structureType].kind;
   button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
@@ -363,6 +375,16 @@ function addDoorway(wall,distance){
  $('doorway-width').select();
 }
 function choosePoint(p,event){
+ if(tool==='construction'){
+  if(event.detail>1)return;
+  if(constructionType!=='point'&&!draft.length){draft=[p];hover=null;updateToolHint();renderPlanView();return;}
+  const start=draft[0];draft=[];hover=null;editorFeedback={};
+  if(start&&length(sub(p,start))<.01){toast('Минимальная длина линии — 10 мм.');updateToolHint();renderPlanView();return;}
+  const e=constructionType==='point'
+   ?{id:uid('ТЧ'),kind:'guide',type:'point',name:'Опорная точка',x:p.x,y:p.y}
+   :{id:uid('ВЛ'),kind:'guide',type:'line',name:'Вспомогательная линия',a:start,b:p,style:constructionType,divisions:1};
+  mutate(()=>{floor().construction.push(e);setSelection([e.id]);},e.name+' добавлена');return;
+ }
  if(tool==='measure'){
   const a=draft[0];
   if(a&&length(sub(p,a))>1e-8){measuredLine={a,b:p,floorId};draft=[];}
@@ -502,7 +524,7 @@ function copySelected(){
   setSelection(copies.values());
  },'Копии созданы');
 }
-function elementIcon(e){return isStructure(e)?STRUCTURE_TYPES[e.type].icon:e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
+function elementIcon(e){return e.kind==='guide'?(e.type==='point'?'axis':'align'):isStructure(e)?STRUCTURE_TYPES[e.type].icon:e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
 function renderElementList(){const list=$('elements-list');if(!list)return;const previousScroll=list.scrollTop;list.replaceChildren();const all=listElements(floor());$('elements-count').textContent=all.length;for(const e of all){const button=document.createElement('button');button.className='element-list-item'+(selectedIds.has(e.id)?' active':'');button.setAttribute('aria-pressed',String(selectedIds.has(e.id)));button.dataset.elementId=e.id;button.innerHTML=`<i data-icon="${elementIcon(e)}"></i><span></span>`;button.querySelector('span').textContent=e.name;button.title=e.name+' · '+e.id;button.onclick=event=>{setTool('select');select(e.id,extendSelection(event));};list.append(button);}if(!all.length){const note=document.createElement('p');note.className='empty-elements';note.textContent='Пока нет элементов. Начните со стены.';list.append(note);}hydrateIcons(list);list.scrollTop=previousScroll;}
 function beginElementDrag(id,point,handle=null){
  if(!findElement(floor(),id))return;
@@ -642,6 +664,14 @@ document.addEventListener('pointerdown',event=>{
 });
 window.addEventListener('resize',closeMenus);
 function modal(title,content){closeMenus();$('modal-title').textContent=title;$('modal-content').innerHTML=content;hydrateIcons($('modal-content'));$('modal').showModal();}
+function chooseConstruction(){
+ modal('Вспомогательная геометрия',`<div class="structure-picker">
+  ${[...Object.entries(GUIDE_STYLES),['point','Опорная точка']].map(([key,name])=>`<button type="button" data-construction="${key}"><i data-icon="${key==='point'?'axis':'align'}"></i><span><strong>${name}</strong><small>${key==='point'?'По точке':'По двум точкам'}</small></span></button>`).join('')}
+ </div>`);
+ $$('[data-construction]').forEach(button=>button.onclick=()=>{
+  constructionType=button.dataset.construction;inspectorTab='geometry';$('modal').close();setTool('construction');
+ });
+}
 function chooseStructure(category){
  const options=Object.entries(STRUCTURE_TYPES).filter(([,spec])=>spec.kind===category);
  const methods={round:'По точке',rect:'По точке',line:'По двум точкам',contour:'По контуру'};
@@ -674,7 +704,7 @@ function editFloor(level){
    if(level)Object.assign(floor(),settings);
    else{
     const id=uid('floor');
-    project.floors.push({id,...settings,walls:[],slabs:[],furniture:[],rooms:[],dimensions:[],structures:[]});
+    project.floors.push({id,...settings,walls:[],slabs:[],furniture:[],rooms:[],dimensions:[],structures:[],construction:[]});
     floorId=id;setSelection([]);draft=[];hover=null;editorFeedback={};section=false;
    }
   },level?'Параметры этажа сохранены':'Этаж создан');
@@ -721,6 +751,7 @@ function setupFurnitureLibrary(){const root=document.createElement('div');root.c
 setupFurnitureLibrary();setupAxisOptions();hydrateIcons();render();fitPlan();
 $$('[data-tool]').forEach(button=>button.addEventListener('click',()=>setTool(button.dataset.tool)));
 $$('[data-structure-category]').forEach(button=>button.onclick=()=>chooseStructure(button.dataset.structureCategory));
+$('construction-button').onclick=chooseConstruction;
 $$('[data-library]').forEach(button=>button.addEventListener('click',()=>setTool(button.dataset.library)));
 $$('[data-view]').forEach(button=>button.addEventListener('click',()=>{section=false;setView(button.dataset.view);refreshScene();}));
 $$('[data-sidebar]').forEach(button=>button.addEventListener('click',()=>{$$('[data-sidebar]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',String(b===button));});$('project-panel').hidden=button.dataset.sidebar!=='project';$('library-panel').hidden=button.dataset.sidebar!=='library';}));

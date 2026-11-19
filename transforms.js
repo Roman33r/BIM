@@ -1,6 +1,7 @@
 import {findElement} from './elements.js';
 import {angleGeometry} from './annotations.js';
 import {isLinearStructure,isRoundStructure,isPileCap,pileFootprintDiameter} from './structures.js';
+import {guidePoints} from './construction-guides.js';
 export const add=(a,b)=>({x:a.x+b.x,y:a.y+b.y});
 export const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
 export const mul=(a,k)=>({x:a.x*k,y:a.y*k});
@@ -16,6 +17,7 @@ export function elementFrame(e,host){
  let origin,w,h;
  if(host){w=e.width;h=host.thickness;const center=add(host.a,mul(u,e.position));origin=sub(sub(center,mul(u,w/2)),mul(v,h/2));}
  else if(e.mode==='angle'){origin=e.vertex;w=0;h=0;}
+ else if(e.kind==='guide'&&e.type==='point'){origin={x:e.x,y:e.y};w=h=0;}
  else if(e.a){w=length(sub(e.b,e.a));h=e.kind==='wall'||isLinearStructure(e)?e.thickness:0;origin=sub(e.a,mul(v,h/2));}
  else if(isRoundStructure(e)){w=h=pileFootprintDiameter(e);origin={x:e.x-w/2,y:e.y-h/2};}
  else if(isPileCap(e)){w=e.w;h=e.d;origin=sub(sub(e,mul(u,w/2)),mul(v,h/2));}
@@ -33,11 +35,17 @@ export function elementFootprint(e,host){
  return [[0,0],[f.w,0],[f.w,f.h],[0,f.h]].map(([x,y])=>framePoint(f,x,y));
 }
 export function elementAxes(e,host){
+ if(e.kind==='guide')return [];
  if(e.showAxes===false)return [];
  if(e.mode==='angle')return [{center:e.vertex,direction:mul(sub(angleGeometry(e).middle,e.vertex),1/e.radius),extent:e.radius+.3}];
  const f=elementFrame(e,host);return [{center:f.center,direction:f.u,extent:Math.max(.3,f.w/2+.3)},{center:f.center,direction:f.v,extent:Math.max(.3,f.h/2+.3)}];
 }
 export function elementAnchors(e,host){
+ if(e.kind==='guide'){
+  const points=guidePoints(e);
+  if(e.type==='line')points.push({...midpoint(e.a,e.b),role:'Середина линии'});
+  return points;
+ }
  if(e.mode==='angle')return [{...e.vertex,role:'Вершина угла'},{...e.a,role:'Конец'},{...e.b,role:'Конец'},{...angleGeometry(e).middle,role:'Середина дуги'}];
  if(isRoundStructure(e)){
   const center={x:e.x,y:e.y};
@@ -58,7 +66,11 @@ export function elementAnchors(e,host){
 }
 export function transformHandles(e,host,unit=.02){
  const f=elementFrame(e,host),handles=[];const put=(key,p,label,cursor='crosshair')=>handles.push({key,...p,label,cursor});
- if(e.kind==='wall'||isLinearStructure(e)){
+ if(e.kind==='guide'){
+  if(e.type==='point')return [];
+  put('a',e.a,'Начало вспомогательной линии');put('b',e.b,'Конец вспомогательной линии');
+ }
+ else if(e.kind==='wall'||isLinearStructure(e)){
   const wall=e.kind==='wall';
   put('a',e.a,wall?'Начало стены':'Начало элемента');put('b',e.b,wall?'Конец стены':'Конец элемента');
   put('thickness',framePoint(f,f.w/2,f.h),wall?'Толщина стены':'Ширина сечения','ns-resize');
@@ -78,6 +90,7 @@ export function transformHandles(e,host,unit=.02){
 export function rotateElement(floor,id,degrees){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found;if(host)throw new Error('Поворот проёма определяется стеной.');
  const f=elementFrame(e),center=f.center;
+ if(e.kind==='guide'&&e.type==='point')return found;
  if(e.a){e.a=rotatePoint(e.a,center,degrees);e.b=rotatePoint(e.b,center,degrees);}
  else if(e.points){e.points=e.points.map(p=>rotatePoint(p,center,degrees));e.rotation=normalAngle((e.rotation||0)+degrees);}
  else if(!isRoundStructure(e)){const origin=rotatePoint({x:e.x,y:e.y},center,degrees);e.x=origin.x;e.y=origin.y;e.rotation=normalAngle((e.rotation||0)+degrees);}
@@ -90,7 +103,10 @@ export function setElementAngle(floor,id,angle){
 }
 export function resizeElement(floor,id,handle,point){
  const found=findElement(floor,id);if(!found)throw new Error('Элемент не найден.');const {element:e,host}=found,f=elementFrame(e,host);
- if(e.kind==='wall'||isLinearStructure(e)){
+ if(e.kind==='guide'){
+  if(e.type==='line'&&['a','b'].includes(handle))e[handle]={...point};
+ }
+ else if(e.kind==='wall'||isLinearStructure(e)){
   if(handle==='thickness'){
    const wall=e.kind==='wall',min=wall ? .05 : Math.max(.02,(e.gauge||0)/.9);
    e.thickness=Math.max(min,Math.min(wall?1.5:10,2*Math.abs(dot(sub(point,f.center),f.v))));

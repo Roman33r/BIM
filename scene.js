@@ -9,6 +9,7 @@ import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
 import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,screwBladeMesh,screwTipHeight} from './structures.js';
 import {elementTilts} from './spatial.js';
+import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -167,6 +168,18 @@ export function createScene(container,onSelect,gestures={}){
   }
   for(const item of floor.furniture)buildFurniture(THREE,tiltedLayer(layer,item),item,ids.has(item.id)?selectedMat:textured?null:plain);
   if(!annotate)return;
+  for(const guide of floor.construction||[]){
+   const color=ids.has(guide.id)?0x2164ff:0xbb7c31;
+   if(guide.type==='line'){
+    const vertices=guideStrokeSegments(guide).map(p=>new THREE.Vector3(p.x-6,.06,p.y-4.5));
+    const line=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),new THREE.LineBasicMaterial({color}));
+    line.userData.elementId=guide.id;layer.add(line);
+   }
+   for(const point of guidePoints(guide)){
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),new THREE.MeshBasicMaterial({color}));
+    marker.position.set(point.x-6,.06,point.y-4.5);marker.userData.elementId=guide.id;layer.add(marker);
+   }
+  }
   for(const room of floor.rooms){
    const frame=elementFrame(room);if(opts.labels!==false)label(layer,room.name,frame.center.x,.12,frame.center.y,room.id,ids.has(room.id));
    if(ids.has(room.id)){const points=[[0,0],[frame.w,0],[frame.w,frame.h],[0,frame.h],[0,0]].map(([x,y])=>{const p=framePoint(frame,x,y);return new THREE.Vector3(p.x-6,.035,p.y-4.5);});const outline=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color:0x2164ff}));outline.userData.elementId=room.id;layer.add(outline);}

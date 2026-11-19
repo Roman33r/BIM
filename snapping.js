@@ -2,13 +2,14 @@ import {findElement} from './elements.js';
 import {elementAnchors,elementAxes,elementFrame,framePoint,add,sub,mul,dot,length} from './transforms.js';
 import {floorElements,elementVisible} from './selection.js';
 export function snapTargets(floor,excludedId,axes=true,options={}){
- const excluded=new Set(Array.isArray(excludedId)?excludedId:[excludedId]), points=[], lines=[];
+ const excluded=new Set(Array.isArray(excludedId)?excludedId:[excludedId]), points=[], lines=[],segments=[];
  for(const {element,host} of floorElements(floor)){
   if(excluded.has(element.id) || excluded.has(host?.id) || !elementVisible(element,options)) continue;
   points.push(...elementAnchors(element,host).map(p=>({...p,id:element.id})));
+  if(element.kind==='guide'&&element.type==='line')segments.push(element);
   if(axes && options.axisTypes?.[element.kind]!==false) lines.push(...elementAxes(element,host).map(a=>({...a,id:element.id})));
  }
- return {points,lines};
+ return {points,lines,segments};
 }
 
 export function snapWallTranslation(wall, otherWalls, dx, dy, tolerance) {
@@ -56,6 +57,16 @@ export function snapWallTranslation(wall, otherWalls, dx, dy, tolerance) {
 export function snapPoint(point,targets,tolerance,{alignment=true,axes=true}={}){
  let best=null;for(const target of targets.points){const distance=length(sub(point,target));if(distance<=tolerance&&(!best||distance<best.distance))best={point:{x:target.x,y:target.y},distance,marker:target,label:target.role,guides:[]};}
  if(best)return {...best,guides:alignment?[{a:best.point,b:point,component:'x'},{a:best.point,b:point,component:'y'}]:[]};
+ for(const segment of targets.segments||[]){
+  const vector=sub(segment.b,segment.a),square=dot(vector,vector);
+  const t=Math.max(0,Math.min(1,dot(sub(point,segment.a),vector)/square));
+  const projected=add(segment.a,mul(vector,t)),distance=length(sub(point,projected));
+  if(distance<=tolerance&&(!best||distance<best.distance))best={
+   point:projected,distance,marker:{...projected,role:'Вспомогательная линия'},label:'Вспомогательная линия',
+   guides:alignment?[{a:segment.a,b:segment.b,face:true}]:[]
+  };
+ }
+ if(best)return best;
  if(axes)for(const axis of targets.lines){const along=dot(sub(point,axis.center),axis.direction);if(Math.abs(along)>axis.extent+tolerance*4)continue;const projected=add(axis.center,mul(axis.direction,along)),distance=length(sub(point,projected));if(distance<=tolerance&&(!best||distance<best.distance))best={point:projected,distance,marker:{...projected,role:'Ось симметрии'},label:'Ось симметрии',guides:[{a:add(axis.center,mul(axis.direction,-axis.extent)),b:add(axis.center,mul(axis.direction,axis.extent)),axis:true}]};}
  if(best)return best;
  const guides=[],snapped={...point};if(alignment){for(const component of ['x','y']){let target=null,gap=tolerance;for(const p of targets.points){const distance=Math.abs(point[component]-p[component]);if(distance<gap){gap=distance;target=p;}}if(target){snapped[component]=target[component];guides.push({a:{...target},b:{...snapped},component});}}}

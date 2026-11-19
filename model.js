@@ -3,6 +3,7 @@ import {isSimplePolygon} from './transforms.js';
 import {angleValue} from './annotations.js';
 import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structures.js';
 import {canTiltElement,tiltFields} from './spatial.js';
+import {GUIDE_STYLES} from './construction-guides.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -48,7 +49,7 @@ export function createDemo(){
  return migrateElements({schemaVersion:1,name:'Дом в сосновом бору',updatedAt:new Date().toISOString(),floors:[floor,upper]});
 }
 export function createEmptyProject(name='Новый проект'){
- return {schemaVersion:1,contentVersion:2,id:uid('project'),name:name.trim()||'Новый проект',updatedAt:new Date().toISOString(),floors:[{id:uid('floor'),name:'1 этаж',elevation:0,height:3,walls:[],slabs:[],rooms:[],dimensions:[],furniture:[],structures:[]}]};
+ return {schemaVersion:1,contentVersion:2,id:uid('project'),name:name.trim()||'Новый проект',updatedAt:new Date().toISOString(),floors:[{id:uid('floor'),name:'1 этаж',elevation:0,height:3,walls:[],slabs:[],rooms:[],dimensions:[],furniture:[],structures:[],construction:[]}]};
 }
 export function validateProject(value){
  const fail=()=>{throw new Error('Файл не соответствует формату проекта версии 1.');};
@@ -104,6 +105,14 @@ export function validateProject(value){
    capped.add(e.pileId);
   }
   syncPileCaps(f);
+  if(!Array.isArray(f.construction)||f.construction.length>2000)fail();
+  for(const e of f.construction){
+   if(!e||e.kind!=='guide'||!str(e.name))fail();
+   id(e.id);
+   if(e.type==='point'){if(!point(e))fail();}
+   else if(e.type!=='line'||!point(e.a)||!point(e.b)||!num(wallLength(e),.01,3000)
+    ||!Object.hasOwn(GUIDE_STYLES,e.style)||!Number.isInteger(e.divisions)||!num(e.divisions,1,100))fail();
+  }
   for(const e of listElements(f)){
    if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
    for(const key of tiltFields)if(e[key]!==undefined&&(!canTiltElement(e)||!num(e[key],-180,180)))fail();

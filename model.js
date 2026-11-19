@@ -1,6 +1,7 @@
-import {migrateElements,FURNITURE_TYPES} from './elements.js';
+import {migrateElements,FURNITURE_TYPES,listElements} from './elements.js';
 import {isSimplePolygon} from './transforms.js';
 import {angleValue} from './annotations.js';
+import {STRUCTURE_TYPES} from './structures.js';
 export const clone = value => structuredClone(value);
 export const wallLength = wall => Math.hypot(wall.b.x-wall.a.x,wall.b.y-wall.a.y);
 export const uid = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
@@ -46,7 +47,7 @@ export function createDemo(){
  return migrateElements({schemaVersion:1,name:'Дом в сосновом бору',updatedAt:new Date().toISOString(),floors:[floor,upper]});
 }
 export function createEmptyProject(name='Новый проект'){
- return {schemaVersion:1,contentVersion:2,id:uid('project'),name:name.trim()||'Новый проект',updatedAt:new Date().toISOString(),floors:[{id:uid('floor'),name:'1 этаж',elevation:0,height:3,walls:[],slabs:[],rooms:[],dimensions:[],furniture:[]}]};
+ return {schemaVersion:1,contentVersion:2,id:uid('project'),name:name.trim()||'Новый проект',updatedAt:new Date().toISOString(),floors:[{id:uid('floor'),name:'1 этаж',elevation:0,height:3,walls:[],slabs:[],rooms:[],dimensions:[],furniture:[],structures:[]}]};
 }
 export function validateProject(value){
  const fail=()=>{throw new Error('Файл не соответствует формату проекта версии 1.');};
@@ -74,7 +75,23 @@ export function validateProject(value){
   }
   if(!Array.isArray(f.furniture)||f.furniture.length>2000)fail();
   for(const e of f.furniture){id(e.id);if(e.kind!=='furniture'||!Object.hasOwn(FURNITURE_TYPES,e.type)||!str(e.name)||!num(e.x)||!num(e.y)||!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.height,.005,15)||!num(e.rotation,-360,360))fail();}
-  for(const e of [...f.walls,...f.walls.flatMap(w=>w.openings),...f.slabs,...f.rooms,...f.furniture,...f.dimensions])if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
+  if(!Array.isArray(f.structures)||f.structures.length>2000)fail();
+  for(const e of f.structures){
+   if(!e||typeof e!=='object'||!Object.hasOwn(STRUCTURE_TYPES,e.type))fail();
+   const spec=STRUCTURE_TYPES[e.type];
+   id(e.id);
+   if(e.kind!==spec.kind||!str(e.name)||!str(e.material)||!num(e.elevation,-100,100)||!num(e.height,.02,30))fail();
+   if(spec.shape==='line'){
+    if(!point(e.a)||!point(e.b)||!num(wallLength(e),.05,100)||!num(e.thickness,.02,10))fail();
+    if(spec.sizes.gauge!==undefined&&!num(e.gauge,.001,Math.min(e.thickness*.9,e.height*.45)))fail();
+   }else if(spec.shape==='contour'){
+    if(!Array.isArray(e.points)||e.points.length<3||e.points.length>200||!e.points.every(point)
+     ||polygonArea(e.points)<.1||!isSimplePolygon(e.points)||!num(e.rotation??0,-360,360))fail();
+   }else if(!point(e))fail();
+   else if(spec.shape==='round'){if(!num(e.diameter,.05,10))fail();}
+   else if(!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.rotation,-360,360))fail();
+  }
+  for(const e of listElements(f))if(e.showAxes!==undefined&&typeof e.showAxes!=='boolean')fail();
  }
  return value;
 }

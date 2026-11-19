@@ -1,9 +1,10 @@
-import {elementFrame, framePoint, add, mul} from './transforms.js';
+import {elementFrame, elementFootprint, add, mul} from './transforms.js';
 import {angleGeometry} from './annotations.js';
+import {FLOOR_COLLECTIONS} from './elements.js';
 
 export const AXIS_TYPES = Object.freeze({
  wall:'Стены', doorway:'Дверные проёмы', door:'Двери', window:'Окна', slab:'Перекрытия',
- furniture:'Мебель и оборудование', room:'Помещения', dimension:'Размеры'
+ furniture:'Мебель и оборудование', room:'Помещения', dimension:'Размеры', foundation:'Фундаменты', framing:'Каркас перекрытия'
 });
 
 export function* floorElements(floor) {
@@ -11,10 +12,11 @@ export function* floorElements(floor) {
   yield {element:wall};
   for (const element of wall.openings) yield {element, host:wall};
  }
- for (const collection of ['slabs','furniture','rooms','dimensions']) {
-  for (const element of floor[collection]) yield {element};
+ for (const collection of FLOOR_COLLECTIONS.slice(1)) {
+  for (const element of floor[collection]||[]) yield {element};
  }
 }
+export function extendSelection(event){return event.ctrlKey||event.metaKey||event.shiftKey;}
 
 export function elementVisible(element, options) {
  return (element.kind !== 'room' || options.labels !== false)
@@ -60,17 +62,16 @@ function matchesOutline(points, box) {
 }
 
 function outline(element, host) {
- if (element.points) return element.points;
  if (element.mode==='angle') {
   const {rays,arc}=angleGeometry(element);
   return [rays[1],rays[0],...arc,rays[2]];
  }
- const frame = elementFrame(element,host);
  if (element.kind==='dimension') {
+  const frame = elementFrame(element,host);
   const offset = mul(frame.v,element.offset);
   return [element.a,element.b,add(element.b,offset),add(element.a,offset)];
  }
- return [[0,0],[frame.w,0],[frame.w,frame.h],[0,frame.h]].map(([x,y])=>framePoint(frame,x,y));
+ return elementFootprint(element,host);
 }
 
 export function selectInPlan(floor, box, options={}) {

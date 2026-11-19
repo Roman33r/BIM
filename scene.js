@@ -2,11 +2,12 @@ import * as THREE from './vendor/three.module.js';
 import {openingSpan,wallBlocks,wallLength} from './model.js';
 import {buildFurniture} from './furniture-scene.js';
 import {elementFrame,framePoint,elementAxes,transformHandles} from './transforms.js';
-import {axisElements,elementVisible,selectionBounds,showSelectionBox} from './selection.js';
+import {axisElements,elementVisible,extendSelection,selectionBounds,showSelectionBox} from './selection.js';
 import {icon} from './icons.js';
 import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
+import {STRUCTURE_TYPES,isStructure,memberProfile} from './structures.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -56,10 +57,11 @@ export function createScene(container,onSelect,gestures={}){
   const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;
   if(id)mesh.userData.elementId=id;layer.add(mesh);return mesh;
  }
- function localBox(layer,wall,start,end,bottom,top,mat,id,depth=wall.thickness){
-  const len=wallLength(wall),mid=(start+end)/2,x=wall.a.x+(wall.b.x-wall.a.x)*mid/len,z=wall.a.y+(wall.b.y-wall.a.y)*mid/len;
+ function localBox(layer,wall,start,end,bottom,top,mat,id,depth=wall.thickness,offset=0){
+  const len=wallLength(wall),mid=(start+end)/2,dx=(wall.b.x-wall.a.x)/len,dz=(wall.b.y-wall.a.y)/len;
+  const x=wall.a.x+dx*mid-dz*offset,z=wall.a.y+dz*mid+dx*offset;
   const mesh=box(layer,end-start,top-bottom,depth,x-6,(bottom+top)/2,z-4.5,mat,id);
-  if(mesh)mesh.rotation.y=-Math.atan2(wall.b.y-wall.a.y,wall.b.x-wall.a.x);
+  if(mesh)mesh.rotation.y=-Math.atan2(dz,dx);
   return mesh;
  }
  function buildDoor(layer,wall,opening,height,selected,textured){
@@ -80,9 +82,36 @@ export function createScene(container,onSelect,gestures={}){
   hit.castShadow=false;hit.receiveShadow=false;
   if(selected)hit.add(new THREE.LineSegments(new THREE.EdgesGeometry(hit.geometry),apertureOutline));
  }
+ function extrudedPlate(layer,points,depth,top,mat,id){
+  const shape=new THREE.Shape();
+  points.forEach((p,i)=>i?shape.lineTo(p.x-6,p.y-4.5):shape.moveTo(p.x-6,p.y-4.5));
+  shape.closePath();
+  const geometry=new THREE.ExtrudeGeometry(shape,{depth,bevelEnabled:false});
+  geometry.rotateX(Math.PI/2);
+  const mesh=new THREE.Mesh(geometry,mat);
+  mesh.position.y=top;mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=id;layer.add(mesh);
+ }
+ function buildStructure(layer,e,selected,textured){
+  const shape=STRUCTURE_TYPES[e.type].shape,mat=material(e.material,selected,textured),bottom=e.elevation-e.height;
+  if(shape==='line'){
+   const length=wallLength(e);
+   for(const profile of memberProfile(e)){
+    localBox(layer,e,0,length,bottom+profile.bottom,bottom+profile.top,mat,e.id,profile.width,profile.offset);
+   }
+  }else if(shape==='contour')extrudedPlate(layer,e.points,e.height,e.elevation,mat,e.id);
+  else if(shape==='round'){
+   const radius=e.diameter/2,mesh=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,e.height,32),mat);
+   mesh.position.set(e.x-6,bottom+e.height/2,e.y-4.5);
+   mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=e.id;layer.add(mesh);
+  }else{
+   const center=elementFrame(e).center,mesh=box(layer,e.w,e.height,e.d,center.x-6,bottom+e.height/2,center.y-4.5,mat,e.id);
+   mesh.rotation.y=-e.rotation*Math.PI/180;
+  }
+ }
  function buildLevel(layer,floor,ids,opts,annotate){
   const heightLimit=1.15,textured=opts.textures!==false;
-  for(const slab of floor.slabs){const shape=new THREE.Shape();slab.points.forEach((p,i)=>i?shape.lineTo(p.x-6,p.y-4.5):shape.moveTo(p.x-6,p.y-4.5));shape.closePath();const geometry=new THREE.ExtrudeGeometry(shape,{depth:slab.thickness,bevelEnabled:false});geometry.rotateX(Math.PI/2);const mesh=new THREE.Mesh(geometry,material(slab.material,ids.has(slab.id),textured));mesh.receiveShadow=true;mesh.castShadow=true;mesh.userData.elementId=slab.id;layer.add(mesh);}
+  for(const slab of floor.slabs)extrudedPlate(layer,slab.points,slab.thickness,0,material(slab.material,ids.has(slab.id),textured),slab.id);
+  for(const e of floor.structures||[])buildStructure(layer,e,ids.has(e.id),textured);
 
   for(const wall of floor.walls){
    const mat=material(wall.material,ids.has(wall.id),textured),h=section?Math.min(wall.height,heightLimit):wall.height;
@@ -140,7 +169,8 @@ export function createScene(container,onSelect,gestures={}){
   const fit=floorLayout!==layout;
   floorLayout=layout;currentFloor=floor;dark=!!opts.dark;section=!!opts.section;
   clearLayers();
-  ground.position.y=Math.min(...levels.map(level=>level.elevation-Math.max(.24,...level.slabs.map(slab=>slab.thickness+.04))));
+  ground.position.y=Math.min(...levels.map(level=>level.elevation+Math.min(-.24,
+   ...level.slabs.map(slab=>-slab.thickness-.04),...(level.structures||[]).map(e=>e.elevation-e.height-.12))));
   for(const level of levels){
    const layer=new THREE.Group(),active=level.id===floor.id;
    layer.position.y=level.elevation;group.add(layer);
@@ -176,7 +206,7 @@ export function createScene(container,onSelect,gestures={}){
  function label(layer,text,x,y,z,id,selected){const canvas=document.createElement('canvas');canvas.width=512;canvas.height=96;const ctx=canvas.getContext('2d');ctx.fillStyle=dark?'#e6edf7':'#344257';if(selected)ctx.fillStyle='#2164ff';ctx.font='500 28px Segoe UI, Arial';ctx.textAlign='center';ctx.fillText(text,256,58);const texture=new THREE.CanvasTexture(canvas);const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:true}));sprite.position.set(x-6,y,z-4.5);sprite.scale.set(1.85,.35,1);sprite.userData.elementId=id;layer.add(sprite);}
  function resize(){const w=container.clientWidth,h=container.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();dirty=true;}
  const observer=new ResizeObserver(resize);observer.observe(container);
- function toScene(point){return new THREE.Vector3(point.x-6,(currentFloor?.elevation??0)+.05,point.y-4.5);}
+ function toScene(point,offset=0){return new THREE.Vector3(point.x-6,(currentFloor?.elevation??0)+offset+.05,point.y-4.5);}
  function frameLoop(){
   raf=requestAnimationFrame(frameLoop);
   if(!container.clientWidth||!dirty)return;
@@ -187,7 +217,7 @@ export function createScene(container,onSelect,gestures={}){
   const handle=rotationTarget&&transformHandles(rotationTarget,null,.035).find(h=>h.key==='rotate');
   rotationButton.hidden=true;
   if(handle){
-   const screen=toScene(handle).project(camera);
+   const screen=toScene(handle,isStructure(rotationTarget)?rotationTarget.elevation:0).project(camera);
    if(Math.abs(screen.x)<.93&&Math.abs(screen.y)<.91&&Math.abs(screen.z)<1){
     rotationButton.style.left=(screen.x+1)*50+'%';rotationButton.style.top=(1-screen.y)*50+'%';
     rotationButton.hidden=false;
@@ -207,9 +237,9 @@ export function createScene(container,onSelect,gestures={}){
   activeGroup.updateWorldMatrix(true,true);
   return raycaster.intersectObjects(activeGroup.children,true).find(hit=>hit.object.userData.elementId);
  }
- function groundPoint(event,offsetX=0){
+ function groundPoint(event,offsetX=0,planeY=currentFloor?.elevation??0){
   setRay(event,offsetX);
-  const p=raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-(currentFloor?.elevation??0)),new THREE.Vector3());
+  const p=raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-planeY),new THREE.Vector3());
   return p?{x:p.x+6,y:p.z+4.5}:null;
  }
  function selectInView(rect){
@@ -248,19 +278,21 @@ export function createScene(container,onSelect,gestures={}){
   if(drag||!event.isPrimary||![0,1,2].includes(event.button))return;
   const rotate=event.target===rotationButton||rotationButton.contains(event.target);
   if(!rotate&&event.target!==renderer.domElement)return;
-  const start=clientPoint(event);
+  const start=clientPoint(event),extend=extendSelection(event);
   if(event.button!==0)drag={mode:'orbit',start,angle,polar};
-  else if(rotate&&rotationTarget){
-   const point=groundPoint(event);
+  else if(rotate&&rotationTarget&&!event.ctrlKey&&!event.metaKey){
+   const planeY=(currentFloor?.elevation??0)+(isStructure(rotationTarget)?rotationTarget.elevation:0);
+   const point=groundPoint(event,0,planeY);
    if(!point)return;
-   drag={mode:'transform',start};
+   drag={mode:'transform',start,planeY};
    gestures.start?.(rotationTarget.id,point,'rotate');
   }else{
-   const id=pick(event)?.object.userData.elementId,point=groundPoint(event);
-   if(id&&point&&!event.shiftKey){
-    drag={mode:'transform',start};
+   const hit=pick(event),id=hit?.object.userData.elementId||(rotate?rotationTarget?.id:null);
+   const planeY=hit?.point.y??currentFloor?.elevation??0,point=groundPoint(event,0,planeY);
+   if(id&&point&&!extend){
+    drag={mode:'transform',start,planeY};
     gestures.start?.(id,point);
-   }else drag={mode:'select',start,id,extend:event.shiftKey};
+   }else drag={mode:'select',start,id,extend};
   }
   event.preventDefault();container.setPointerCapture(event.pointerId);
  });
@@ -270,7 +302,7 @@ export function createScene(container,onSelect,gestures={}){
   drag.active ||= Math.hypot(dx,dy)>=4;
   if(!drag.active)return;
   if(drag.mode==='transform'){
-   const world=groundPoint(event),adjacent=groundPoint(event,1);
+   const world=groundPoint(event,0,drag.planeY),adjacent=groundPoint(event,1,drag.planeY);
    if(world&&adjacent)gestures.move?.(world,event.shiftKey,event.altKey,Math.hypot(world.x-adjacent.x,world.y-adjacent.y));
   }else if(drag.mode==='select'){
    showSelectionBox(marquee,selectionBounds(drag.start,point),container.getBoundingClientRect());

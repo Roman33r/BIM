@@ -29,7 +29,13 @@
 .opening-action{width:100%;margin-top:8px}
 .editor-menu{position:fixed;right:auto;width:max-content;min-width:210px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto}
 .editor-menu button:focus-visible{outline-offset:-2px;background:var(--hover)}
-@media(max-height:780px){.tools-top{gap:5px}.tools-top .tool{height:48px}}
+.structure-picker{display:grid;gap:7px}
+.structure-picker button{justify-content:flex-start;gap:14px;text-align:left;white-space:normal;padding:10px 12px;border:1px solid var(--line);border-radius:7px}
+.structure-picker button i{color:var(--blue)}
+.structure-picker strong,.structure-picker small{display:block}
+.structure-picker small{margin-top:3px;color:var(--muted)}
+.group-actions>.button{margin:0 3px 12px 0}
+@media(max-height:800px){.tools-top{gap:4px}.tools-top .tool{height:43px;padding:4px 3px;gap:3px}.tools-top .tool i{width:20px;height:20px}}
 .angle-label{paint-order:stroke;stroke:var(--canvas,#fff);stroke-width:.08;stroke-linejoin:round}
 .tools-top{overflow:auto;min-height:0}
 .tools-top .tool{flex:none}

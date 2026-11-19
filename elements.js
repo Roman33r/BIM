@@ -1,6 +1,7 @@
 // Shared element operations for the plan, inspector and 3D viewport.
 export const FURNITURE_TYPES={desk:'Рабочий стол',chair:'Стул',table:'Обеденный стол',sofa:'Диван',coffee:'Журнальный столик',bed:'Кровать',plant:'Растение',cabinet:'Кухонный модуль',sink:'Мойка',hob:'Варочная панель',tub:'Ванна',basin:'Раковина',toilet:'Унитаз',washer:'Стиральная машина',stairs:'Лестница',lounger:'Шезлонг',rug:'Ковёр'};
 export const FURNITURE_SIZES={desk:[1.6,.7,.76],chair:[.47,.47,.85],table:[1.55,.95,.76],sofa:[2.9,.95,.9],coffee:[1.55,.67,.45],bed:[1.85,2.1,.55],plant:[.4,.4,1],cabinet:[3.4,.62,.9],sink:[.65,.4,.95],hob:[.45,.7,.95],tub:[.75,1.35,.55],basin:[.49,.39,.85],toilet:[.45,.59,.65],washer:[.6,.6,.85],stairs:[1.13,3.3,2.7],lounger:[.7,1.3,.55],rug:[3.42,1.5,.01]};
+export const FLOOR_COLLECTIONS=['walls','slabs','furniture','rooms','dimensions','structures'];
 export function makeFurniture(type,x,y,id){const [w,d,height]=FURNITURE_SIZES[type];return {id,kind:'furniture',type,name:FURNITURE_TYPES[type],x,y,w,d,height,rotation:0};}
 function demoFurniture(floor){
  const items=[];const add=(type,x,y)=>{const f=makeFurniture(type,x,y,`${floor.id}-furniture-${items.length+1}`);items.push(f);return f;};
@@ -20,16 +21,30 @@ export function migrateElements(project){
   }
   project.contentVersion=2;
  }
- for(const f of project.floors){f.furniture??=[];f.rooms.forEach((r,i)=>{r.id??=`${f.id}-room-${i+1}`;r.kind='room';});f.dimensions.forEach(d=>{d.kind='dimension';d.name??=d.mode==='angle'?'Угловой размер':'Размер';if(d.mode!=='angle')d.offset??=.5;});}
+ for(const f of project.floors){f.furniture??=[];f.structures??=[];f.rooms.forEach((r,i)=>{r.id??=`${f.id}-room-${i+1}`;r.kind='room';});f.dimensions.forEach(d=>{d.kind='dimension';d.name??=d.mode==='angle'?'Угловой размер':'Размер';if(d.mode!=='angle')d.offset??=.5;});}
  project.id??=globalThis.crypto?.randomUUID?.()||`project-${Date.now()}-${Math.random().toString(36).slice(2)}`;
  return project;
 }
 export function findElement(floor,id){
  for(const wall of floor.walls){if(wall.id===id)return {element:wall,collection:'walls'};const opening=wall.openings.find(o=>o.id===id);if(opening)return {element:opening,host:wall,collection:'openings'};}
- for(const collection of ['slabs','furniture','rooms','dimensions']){const element=floor[collection]?.find(e=>e.id===id);if(element)return {element,collection};}
+ for(const collection of FLOOR_COLLECTIONS.slice(1)){const element=floor[collection]?.find(e=>e.id===id);if(element)return {element,collection};}
  return null;
 }
-export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...floor.slabs,...floor.furniture,...floor.rooms,...floor.dimensions];}
+export function listElements(floor){return [...floor.walls.flatMap(w=>[w,...w.openings]),...FLOOR_COLLECTIONS.slice(1).flatMap(key=>floor[key]||[])];}
+export function moveSelectionToFloor(source,target,ids){
+ const selected=new Set(ids),moved=[];
+ for(const key of FLOOR_COLLECTIONS){
+  const entities=source[key]||[],items=entities.filter(e=>selected.has(e.id));
+  if(!items.length)continue;
+  source[key]=entities.filter(e=>!selected.has(e.id));
+  (target[key]??=[]).push(...items);
+  for(const e of items){
+   moved.push(e.id);
+   if(e.openings)moved.push(...e.openings.filter(o=>selected.has(o.id)).map(o=>o.id));
+  }
+ }
+ return moved;
+}
 export function setOpeningDoor(opening,installed){
  const from=installed?'doorway':'door',to=installed?'door':'doorway';
  if(opening.kind!==from)return false;

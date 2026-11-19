@@ -1,13 +1,14 @@
 import {createDemo,createEmptyProject,clone,wallLength,uid,projectPoint,canPlaceOpening,polygonArea,validateProject} from './model.js';
 import {renderPlan,exportSVG,planBounds} from './plan.js';
 import {hydrateIcons} from './icons.js';
-import {findElement,listElements,elementPosition,translateElement,translateSelection,makeFurniture,setOpeningDoor,FURNITURE_TYPES} from './elements.js';
+import {findElement,listElements,elementPosition,translateElement,translateSelection,makeFurniture,setOpeningDoor,moveSelectionToFloor,FLOOR_COLLECTIONS,FURNITURE_TYPES} from './elements.js';
 import {loadProjects,saveProjects,CATALOG_KEY,LEGACY_KEY} from './project-store.js';
-import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,normalAngle,length,sub} from './transforms.js';
+import {elementFrame,elementAngle,elementAnchors,transformHandles,resizeElement,rotateElement,normalAngle,length,sub,isSimplePolygon} from './transforms.js';
 import {snapTargets,snapPoint,snapTranslation,snapWallTranslation} from './snapping.js';
-import {AXIS_TYPES,selectInPlan,selectionBounds,showSelectionBox} from './selection.js';
+import {AXIS_TYPES,extendSelection,selectInPlan,selectionBounds,showSelectionBox} from './selection.js';
 import {angleLabel,angleRadius,angleValue} from './annotations.js';
 import {materialNames} from './materials.js';
+import {STRUCTURE_TYPES,isStructure,isRoundStructure,makeStructure} from './structures.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
@@ -16,6 +17,7 @@ const escapeHTML=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 let project=createDemo(),projects=[],loadWarning='',preferences={dark:false,grid:true,labels:true,dimensions:true,snap:true,axes:true,guides:true,allFloors:false,textures:true,axisTypes:{}};
 try{({project,projects}=loadProjects(localStorage));const prefs=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}');for(const k of Object.keys(preferences))if(typeof prefs[k]==='boolean'&&k!=='axisTypes')preferences[k]=prefs[k];for(const kind of Object.keys(AXIS_TYPES))if(prefs.axisTypes?.[kind]===false)preferences.axisTypes[kind]=false;}catch{loadWarning='Не удалось прочитать локальное сохранение. Открыт пример; исходное сохранение не изменено.';}
 let floorId=project.floors[0].id,tool='select',view='plan',draft=[],hover=null,pan=null,spaceHeld=false,section=false,scene=null,scenePromise=null;
+let structureType='pile';
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
 let cursorPoint={x:0,y:0};
@@ -54,7 +56,13 @@ function pixelUnit(){return 1/($('plan-svg').getScreenCTM()?.a||50);}
 function renderPlanView(){
  updateViewBox();
  const points=draft.length?[...draft,...(hover?[hover]:[])]:[];
- $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:tool==='angle'?[]:points,angleDraft:tool==='angle'?points:null}).content;
+ let structurePreview;
+ if(tool==='structure'&&hover){
+  const shape=STRUCTURE_TYPES[structureType].shape;
+  if(shape==='round'||shape==='rect')structurePreview=makeStructure(structureType,'',[hover]);
+  else if(shape==='line'&&points.length===2)structurePreview=makeStructure(structureType,'',points);
+ }
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,labels:preferences.labels,dimensions:preferences.dimensions||tool==='angle',dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:tool==='angle'?[]:points,angleDraft:tool==='angle'?points:null,structurePreview}).content;
 }
 
 const floorsByElevation=()=>[...project.floors].sort((a,b)=>b.elevation-a.elevation);
@@ -92,11 +100,54 @@ function render(){
 }
 function propertyInput(key,label,value,{min=0,max=100000,step=10,unit='мм'}={}){return `<div class="property-row"><label for="property-${key}">${label}</label><div class="input-unit"><input id="property-${key}" data-property="${key}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><span>${unit}</span></div></div>`;}
 function sectionTitle(title){return `<h2>${title}<i data-icon="chevron"></i></h2>`;}
+function structureProperties(e){
+ const dimensions=[],shape=STRUCTURE_TYPES[e.type].shape;
+ if(shape==='line')dimensions.push(['length','Длина',wallLength(e),50,100000],['thickness','Ширина сечения',e.thickness,20,10000]);
+ if(shape==='round')dimensions.push(['diameter','Диаметр',e.diameter,50,10000]);
+ if(shape==='rect')dimensions.push(['w','Ширина',e.w,50,30000],['d','Длина в плане',e.d,50,30000]);
+ const heightLabel=e.kind==='framing'?'Высота сечения':shape==='round'?'Длина сваи':shape==='contour'?'Толщина плиты':'Высота';
+ dimensions.push(['height',heightLabel,e.height,20,30000]);
+ if(e.gauge!==undefined)dimensions.push(['gauge','Толщина профиля',e.gauge,1,Math.floor(1000*Math.min(.9*e.thickness,.45*e.height))]);
+ dimensions.push(['elevation','Верх от отметки этажа',e.elevation,-100000,100000]);
+ return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('');
+}
+function renderGroupInspector(node){
+ const items=[...selectedIds].map(id=>findElement(floor(),id)).filter(Boolean);
+ const transferable=items.some(item=>!item.host);
+ const allHaveMaterial=items.every(item=>typeof item.element.material==='string');
+ const materials=[...new Set(items.map(item=>item.element.material))];
+ node.innerHTML=`<div class="empty-selection"><i data-icon="cursor"></i><h2>Выбрано объектов: ${items.length}</h2><p>Перетащите любой выбранный объект, чтобы переместить всё выделение.</p></div>
+ <section class="property-section group-actions">
+  <button type="button" class="button" id="group-copy"><i data-icon="copy"></i>Дублировать</button>
+  <button type="button" class="button" id="group-delete"><i data-icon="trash"></i>Удалить</button>
+  ${transferable&&project.floors.length>1?`<div class="property-row"><label for="group-floor">Перенести на этаж</label><select id="group-floor">${floorOptions()}</select></div>`:''}
+  ${allHaveMaterial?`<div class="property-row"><label for="group-material">Материал</label><select id="group-material">
+   ${materials.length>1?'<option selected disabled>Разные материалы</option>':''}
+   ${[...new Set([...materials,...materialNames])].map(material=>`<option ${materials.length===1&&materials[0]===material?'selected':''}>${escapeHTML(material)}</option>`).join('')}
+   </select></div>`:''}
+  ${items.some(item=>item.host&&!selectedIds.has(item.host.id))?'<p class="property-note">Проёмы переносятся между этажами вместе со стенами.</p>':''}
+ </section>`;
+ $('group-copy').onclick=copySelected;$('group-delete').onclick=removeSelected;
+ if($('group-floor'))$('group-floor').onchange=event=>transferSelection(event.target.value);
+ if($('group-material'))$('group-material').onchange=event=>{
+  mutate(()=>{for(const item of items)item.element.material=event.target.value;},'Материал группы изменён');
+ };
+}
+function transferSelection(floorIdTarget){
+ const current=floor(),target=project.floors.find(level=>level.id===floorIdTarget);
+ if(!target||target===current||![...selectedIds].some(id=>{
+  const item=findElement(current,id);return item&&!item.host;
+ }))return;
+ const moved=mutate(()=>{
+  setSelection(moveSelectionToFloor(current,target,selectedIds));floorId=target.id;draft=[];hover=null;editorFeedback={};
+ },'Перенесено на этаж «'+target.name+'»');
+ if(moved&&!preferences.allFloors)fitPlan();
+}
 function renderInspector(){
  renderElementList();
  const node=$('inspector-content'),item=selected();
  if(selectedIds.size>1){
-  node.innerHTML=`<div class="empty-selection"><i data-icon="cursor"></i><h2>Выбрано объектов: ${selectedIds.size}</h2><p>Перетащите любой выбранный объект или используйте стрелки. Ctrl+Z отменяет перенос группы.</p></div>`;
+  renderGroupInspector(node);
   hydrateIcons(node);
   return;
  }
@@ -104,13 +155,14 @@ function renderInspector(){
  const {element:e,host}=item,kind=elementIcon(e),pos=elementPosition(e,host);
  let body=`<div class="element-title"><i data-icon="${kind}"></i><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.id.length>18?e.id.slice(0,14)+'…':e.id)}</small></div></div><section class="property-section">${sectionTitle('Общие')}`;
  if(e.kind==='wall')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+propertyInput('height','Высота',Math.round(e.height*1000),{min:1000,max:15000})+propertyInput('length','Длина',Math.round(wallLength(e)*1000),{min:200,max:100000});
+ else if(isStructure(e))body+=structureProperties(e);
  else if(host)body+=propertyInput('width','Ширина проёма',Math.round(e.width*1000),{min:300,max:10000,step:1})+propertyInput('height','Высота проёма',Math.round(e.height*1000),{min:300,max:15000,step:1})+propertyInput('sill','Отметка низа',Math.round(e.sill*1000),{min:0,max:15000,step:1})+propertyInput('position','Положение',Math.round(e.position*1000),{min:0,max:100000,step:1});
  else if(e.kind==='slab')body+=propertyInput('thickness','Толщина',Math.round(e.thickness*1000),{min:50,max:1500})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(polygonArea(e.points),2)} м²</span></div>`;
  else if(e.kind==='furniture')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:50,max:30000})+propertyInput('d','Глубина',Math.round(e.d*1000),{min:50,max:30000})+propertyInput('height','Высота',Math.round(e.height*1000),{min:5,max:15000});
  else if(e.kind==='room')body+=propertyInput('w','Ширина',Math.round(e.w*1000),{min:100,max:100000})+propertyInput('h','Глубина',Math.round(e.h*1000),{min:100,max:100000})+`<div class="property-row"><span class="field-label">Площадь</span><span class="value-muted">${fmt(e.w*e.h,2)} м²</span></div>`;
  else if(e.mode==='angle')body+=`<div class="property-row"><span class="field-label">Угол</span><span class="value-muted">${angleLabel(angleValue(e))}</span></div>`+propertyInput('radius','Радиус дуги',Math.round(e.radius*1000),{min:50,max:100000,step:1});
  else if(e.kind==='dimension')body+=`<div class="property-row"><span class="field-label">Длина</span><span class="value-muted">${fmt(wallLength(e)*1000)} мм</span></div>`+propertyInput('offset','Отступ',Math.round(e.offset*1000),{min:-100000,max:100000});
- if(['wall','slab'].includes(e.kind)){const materials=[...new Set([e.material,...materialNames])];body+=`<div class="property-row"><label for="property-material">Материал</label><select id="property-material" data-property="material">${materials.map(m=>`<option ${m===e.material?'selected':''}>${escapeHTML(m)}</option>`).join('')}</select></div>`;}
+ if(['wall','slab'].includes(e.kind)||isStructure(e)){const materials=[...new Set([e.material,...materialNames])];body+=`<div class="property-row"><label for="property-material">Материал</label><select id="property-material" data-property="material">${materials.map(m=>`<option ${m===e.material?'selected':''}>${escapeHTML(m)}</option>`).join('')}</select></div>`;}
  body+=host?`<div class="property-row"><span class="field-label">Этаж стены</span><span class="value-muted">${escapeHTML(floor().name)}</span></div>`:`<div class="property-row"><label for="property-floorId">Этаж</label><select id="property-floorId" data-property="floorId">${floorOptions()}</select></div>`;
  if(e.kind==='doorway'||e.kind==='door'){
   const empty=e.kind==='doorway';
@@ -120,7 +172,7 @@ function renderInspector(){
  if(!host)body+=`<section class="property-section">${sectionTitle('Положение')}${propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000})}${propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000})}<p class="property-note">Перетащите элемент мышью или задайте координаты. Стрелки — шаг 50 мм, Shift — 500 мм.</p></section>`;
  if(e.kind==='wall')body+=`<section class="property-section">${sectionTitle('Конструкция')}<div class="property-row"><label for="property-loadBearing">Несущая стена</label><input class="toggle" id="property-loadBearing" data-property="loadBearing" type="checkbox" ${e.loadBearing?'checked':''}></div><div class="property-row"><span class="field-label">Проёмы</span><span class="value-muted">${e.openings.length}</span></div><div class="property-row"><span class="field-label">Объём брутто</span><span class="value-muted">${fmt(wallLength(e)*e.thickness*e.height,2)} м³</span></div></section>`;
  if(host)body+=`<section class="property-section">${sectionTitle('Размещение')}<div class="property-row"><span class="field-label">Основа</span><span class="value-muted">${escapeHTML(host.id.slice(0,14))}</span></div><p class="property-note">Положение отсчитывается от начала оси стены. Проём сохраняет связь со стеной.</p></section>`;
- if(!host)body+=`<section class="property-section">${sectionTitle('Поворот')}<div class="property-row"><span class="field-label">Угол</span><span class="value-muted">${fmt(elementAngle(e),1)}°</span></div></section>`;
+ if(!host&&!isRoundStructure(e))body+=`<section class="property-section">${sectionTitle('Поворот')}<div class="property-row"><span class="field-label">Угол</span><span class="value-muted">${fmt(elementAngle(e),1)}°</span></div></section>`;
  body+=`<section class="property-section">${sectionTitle('Привязки')}<div class="property-row"><label for="property-showAxes">Оси симметрии</label><input class="toggle" id="property-showAxes" data-property="showAxes" type="checkbox" ${e.showAxes!==false?'checked':''}></div><p class="property-note">Ручки на плане меняют размер. Круглая ручка поворачивает элемент. Alt временно отключает привязки.</p></section>`;
  body+=`<section class="property-section">${sectionTitle('Идентификация')}<label class="element-name-label" for="element-name">Название</label><input id="element-name" class="element-name-input" data-property="name" type="text" maxlength="100" value="${escapeHTML(e.name)}"><p class="property-note">${e.kind==='wall'?'Стена перемещается вместе со своими дверями и окнами.':'Параметры и положение сохраняются в проекте.'}</p></section>`;
  node.innerHTML=body;hydrateIcons(node);node.querySelectorAll('[data-property]').forEach(input=>{input.addEventListener('change',()=>updateProperty(input));input.addEventListener('keydown',event=>{if(event.key==='Enter')input.blur();});});
@@ -128,13 +180,7 @@ function renderInspector(){
 }
 function updateProperty(input){const item=selected();if(!item)return;const key=input.dataset.property,value=input.type==='checkbox'?input.checked:input.tagName==='SELECT'||input.type==='text'?input.value.trim():Number(input.value)/1000;
  if(key==='floorId'){
-  const target=project.floors.find(level=>level.id===input.value);
-  if(!target||target===floor()||item.host)return;
-  const moved=mutate(()=>{
-   const source=floor()[item.collection];source.splice(source.indexOf(item.element),1);
-   target[item.collection].push(item.element);floorId=target.id;draft=[];hover=null;editorFeedback={};
-  },'Перенесено на этаж «'+target.name+'»');
-  if(moved&&!preferences.allFloors)fitPlan();
+  transferSelection(input.value);
   return;
  }
  mutate(()=>{const {element:e,host}=item;
@@ -147,16 +193,28 @@ function updateProperty(input){const item=selected();if(!item)return;const key=i
 }
 async function ensureScene(){if(scene){refreshScene();scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany,context:showEditorMenu});refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
 function setView(next){view=next;$('viewports').dataset.mode=next;$$('[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===next);button.setAttribute('aria-pressed',String(button.dataset.view===next));});if(next!=='plan')ensureScene();if(tool!=='select'&&next==='3d')setTool('select');}
-const hints={select:'Перетащите элемент для переноса · Правая кнопка — меню',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',doorway:'Укажите место на стене и задайте размеры проёма',door:'Нажмите на пустой дверной проём',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки для размера',room:'Задайте два противоположных угла помещения'};
+const hints={select:'Ctrl + щелчок — добавить к выделению · Правая кнопка — меню',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',doorway:'Укажите место на стене и задайте размеры проёма',door:'Нажмите на пустой дверной проём',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки для размера',room:'Задайте два противоположных угла помещения'};
 function updateToolHint(){
  let hint=hints[tool];
  if(tool==='select'&&!listElements(floor()).length)hint='Пустой этаж · Выберите «Стена», «Плита» или добавьте мебель';
  if(tool==='slab')hint=`${floorLabel(floor())} · ${hint}`;
  if(tool==='angle')hint=['Укажите вершину угла','Укажите точку на первом луче','Укажите точку на втором луче'][draft.length];
+ if(tool==='structure'){
+  const spec=STRUCTURE_TYPES[structureType],hintByShape={round:'Укажите центр сваи',rect:'Укажите центр опоры',line:draft.length?'Укажите конец элемента':'Укажите начало элемента',contour:hints.slab};
+  hint=`${spec.name} · ${hintByShape[spec.shape]}`;
+ }
  $('canvas-hint').textContent=hint;
  $('tool-status').textContent=tool==='select'?'Выбор элементов':hint;
 }
-function setTool(next){tool=next;draft=[];hover=null;editorFeedback={};$$('[data-tool]').forEach(button=>{button.classList.toggle('active',button.dataset.tool===next);button.setAttribute('aria-pressed',String(button.dataset.tool===next));});updateToolHint();$('drawing-surface').classList.toggle('drawing',next!=='select');if(next!=='select'&&view==='3d')setView('plan');renderPlanView();refreshScene();}
+function setTool(next){
+ tool=next;draft=[];hover=null;editorFeedback={};
+ $$('[data-tool], [data-structure-category]').forEach(button=>{
+  const active=button.dataset.tool===next||next==='structure'&&button.dataset.structureCategory===STRUCTURE_TYPES[structureType].kind;
+  button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+ });
+ updateToolHint();$('drawing-surface').classList.toggle('drawing',next!=='select');
+ if(next!=='select'&&view==='3d')setView('plan');renderPlanView();refreshScene();
+}
 function worldPoint(event){const svg=$('plan-svg'),point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;return point.matrixTransform(svg.getScreenCTM().inverse());}
 function snapped(point,event){let p={x:point.x,y:point.y};editorFeedback={};
  if(preferences.snap&&!event.altKey){const result=snapPoint(p,snapTargets(floor(),null,preferences.axes,sceneOptions()),pixelUnit()*8,{alignment:preferences.guides,axes:preferences.axes});editorFeedback=result;p=result.label?result.point:{x:Math.round(p.x*20)/20,y:Math.round(p.y*20)/20};}
@@ -194,6 +252,19 @@ function addDoorway(wall,distance){
  $('doorway-width').select();
 }
 function choosePoint(p,event){
+ if(tool==='structure'){
+  const spec=STRUCTURE_TYPES[structureType];
+  if((spec.shape==='line'||spec.shape==='contour')&&event.detail>1)return;
+  if(spec.shape==='line'||spec.shape==='contour'){
+   draft.push(p);hover=null;
+   if(spec.shape==='line'&&draft.length===2){
+    const points=draft;draft=[];
+    if(length(sub(points[0],points[1]))<.05){toast('Минимальная длина — 50 мм.');updateToolHint();renderPlanView();return;}
+    addStructure(points);
+   }else{updateToolHint();renderPlanView();}
+  }else addStructure([p]);
+  return;
+ }
  if(tool==='door'){
   const id=event.target.closest('[data-element]')?.dataset.element;
   const item=findElement(floor(),id);
@@ -229,7 +300,21 @@ function choosePoint(p,event){
   mutate(()=>{nearest.wall.openings.push(opening);setSelection([opening.id]);},'Окно добавлено');
  }
 }
-function finishSlab(){if(tool!=='slab'||draft.length<3){toast('Для перекрытия нужны минимум три вершины.');return;}const points=clone(draft);draft=[];hover=null;mutate(()=>{if(polygonArea(points)<.1)throw new Error('Слишком маленькая площадь контура.');for(let i=0;i<points.length;i++)for(let j=i+1;j<points.length;j++){if(j===i+1||(i===0&&j===points.length-1))continue;const a=points[i],b=points[(i+1)%points.length],c=points[j],d=points[(j+1)%points.length];const cross=(p,q,r)=>(q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);if(cross(a,b,c)*cross(a,b,d)<0&&cross(c,d,a)*cross(c,d,b)<0)throw new Error('Контур перекрытия пересекает сам себя.');}const id=uid('ПЛ');floor().slabs.push({id,kind:'slab',name:'Перекрытие',points,thickness:.2,material:'Бетон'});setSelection([id]);},'Перекрытие добавлено');}
+function addStructure(points){
+ const spec=STRUCTURE_TYPES[structureType];
+ const e=makeStructure(structureType,uid(spec.kind==='foundation'?'ФН':'КР'),points);
+ hover=null;editorFeedback={};
+ mutate(()=>{floor().structures.push(e);setSelection([e.id]);},e.name+' · добавлено');
+}
+function drawingContour(){return tool==='slab'||tool==='structure'&&STRUCTURE_TYPES[structureType].shape==='contour';}
+function finishContour(){
+ if(draft.length<3){toast('Для контура нужны минимум три вершины.');return;}
+ if(polygonArea(draft)<.1||!isSimplePolygon(draft)){toast('Контур должен иметь площадь от 0,1 м² и не пересекать себя.');return;}
+ const points=draft;draft=[];hover=null;editorFeedback={};
+ if(tool==='structure'){addStructure(points);return;}
+ const id=uid('ПЛ');
+ mutate(()=>{floor().slabs.push({id,kind:'slab',name:'Перекрытие',points,thickness:.2,material:'Бетон'});setSelection([id]);},'Перекрытие добавлено');
+}
 function removeSelected(){
  if(!selectedIds.size)return;
  const item=selected();
@@ -244,7 +329,7 @@ function removeSelected(){
     remaining.push(o.id);return true;
    });
   }
-  for(const key of ['walls','slabs','furniture','rooms','dimensions'])current[key]=current[key].filter(e=>!selectedIds.has(e.id));
+  for(const key of FLOOR_COLLECTIONS)current[key]=current[key].filter(e=>!selectedIds.has(e.id));
   setSelection(remaining);
  },'Удаление выполнено · Ctrl+Z — отменить');
 }
@@ -270,8 +355,8 @@ function copySelected(){
   setSelection(copies);
  },'Копии созданы');
 }
-function elementIcon(e){return e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
-function renderElementList(){const list=$('elements-list');if(!list)return;const previousScroll=list.scrollTop;list.replaceChildren();const all=listElements(floor());$('elements-count').textContent=all.length;for(const e of all){const button=document.createElement('button');button.className='element-list-item'+(selectedIds.has(e.id)?' active':'');button.setAttribute('aria-pressed',String(selectedIds.has(e.id)));button.dataset.elementId=e.id;button.innerHTML=`<i data-icon="${elementIcon(e)}"></i><span></span>`;button.querySelector('span').textContent=e.name;button.title=e.name+' · '+e.id;button.onclick=event=>{setTool('select');select(e.id,event.shiftKey);};list.append(button);}if(!all.length){const note=document.createElement('p');note.className='empty-elements';note.textContent='Пока нет элементов. Начните со стены.';list.append(note);}hydrateIcons(list);list.scrollTop=previousScroll;}
+function elementIcon(e){return isStructure(e)?STRUCTURE_TYPES[e.type].icon:e.mode==='angle'?'angle':({wall:'wall',slab:'layers',doorway:'doorway',door:'door',window:'window',furniture:'cube',room:'home',dimension:'dimension'}[e.kind]||'cube');}
+function renderElementList(){const list=$('elements-list');if(!list)return;const previousScroll=list.scrollTop;list.replaceChildren();const all=listElements(floor());$('elements-count').textContent=all.length;for(const e of all){const button=document.createElement('button');button.className='element-list-item'+(selectedIds.has(e.id)?' active':'');button.setAttribute('aria-pressed',String(selectedIds.has(e.id)));button.dataset.elementId=e.id;button.innerHTML=`<i data-icon="${elementIcon(e)}"></i><span></span>`;button.querySelector('span').textContent=e.name;button.title=e.name+' · '+e.id;button.onclick=event=>{setTool('select');select(e.id,extendSelection(event));};list.append(button);}if(!all.length){const note=document.createElement('p');note.className='empty-elements';note.textContent='Пока нет элементов. Начните со стены.';list.append(note);}hydrateIcons(list);list.scrollTop=previousScroll;}
 function beginElementDrag(id,point,handle=null){
  if(!findElement(floor(),id))return;
  if(!selectedIds.has(id))select(id);
@@ -406,6 +491,18 @@ document.addEventListener('pointerdown',event=>{
 });
 window.addEventListener('resize',closeMenus);
 function modal(title,content){closeMenus();$('modal-title').textContent=title;$('modal-content').innerHTML=content;hydrateIcons($('modal-content'));$('modal').showModal();}
+function chooseStructure(category){
+ const options=Object.entries(STRUCTURE_TYPES).filter(([,spec])=>spec.kind===category);
+ const methods={round:'По точке',rect:'По точке',line:'По двум точкам',contour:'По контуру'};
+ modal(category==='foundation'?'Фундаменты':'Каркас перекрытия',`<div class="structure-picker">
+  ${options.map(([type,spec])=>`<button type="button" data-structure="${type}">
+   <i data-icon="${spec.icon}"></i><span><strong>${spec.name}</strong><small>${methods[spec.shape]}</small></span>
+  </button>`).join('')}
+ </div>`);
+ $$('[data-structure]').forEach(button=>button.onclick=()=>{
+  structureType=button.dataset.structure;$('modal').close();setTool('structure');
+ });
+}
 function editFloor(level){
  if(!level&&project.floors.length>=20){toast('В проекте может быть до 20 этажей.');return;}
  const top=floorsByElevation()[0];
@@ -426,7 +523,7 @@ function editFloor(level){
    if(level)Object.assign(floor(),settings);
    else{
     const id=uid('floor');
-    project.floors.push({id,...settings,walls:[],slabs:[],furniture:[],rooms:[],dimensions:[]});
+    project.floors.push({id,...settings,walls:[],slabs:[],furniture:[],rooms:[],dimensions:[],structures:[]});
     floorId=id;setSelection([]);draft=[];hover=null;editorFeedback={};section=false;
    }
   },level?'Параметры этажа сохранены':'Этаж создан');
@@ -472,6 +569,7 @@ function setupAxisOptions(){
 function setupFurnitureLibrary(){const root=document.createElement('div');root.className='library-grid furniture-library';for(const type of ['sofa','table','chair','desk','bed','plant','stairs','cabinet','basin','toilet']){const button=document.createElement('button');button.innerHTML='<i data-icon="cube"></i><strong></strong>';button.querySelector('strong').textContent=FURNITURE_TYPES[type];button.onclick=()=>{mutate(()=>{const e=makeFurniture(type,Math.round((camera.x+camera.w/2)*20)/20,Math.round((camera.y+camera.h/2)*20)/20,uid('МБ'));floor().furniture.push(e);setSelection([e.id]);},'Элемент добавлен. Перетащите его на нужное место.');setTool('select');};root.append(button);}$('library-panel').append(root);}
 setupFurnitureLibrary();setupAxisOptions();hydrateIcons();render();fitPlan();
 $$('[data-tool]').forEach(button=>button.addEventListener('click',()=>setTool(button.dataset.tool)));
+$$('[data-structure-category]').forEach(button=>button.onclick=()=>chooseStructure(button.dataset.structureCategory));
 $$('[data-library]').forEach(button=>button.addEventListener('click',()=>setTool(button.dataset.library)));
 $$('[data-view]').forEach(button=>button.addEventListener('click',()=>{section=false;setView(button.dataset.view);refreshScene();}));
 $$('[data-sidebar]').forEach(button=>button.addEventListener('click',()=>{$$('[data-sidebar]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',String(b===button));});$('project-panel').hidden=button.dataset.sidebar!=='project';$('library-panel').hidden=button.dataset.sidebar!=='library';}));
@@ -501,7 +599,7 @@ $('sheet-view').onclick=()=>actionModal('План этажа','Откроетс�
 $('modal-close').onclick=()=>$('modal').close();$('modal').addEventListener('click',event=>{if(event.target===$('modal')){const r=$('modal').getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)$('modal').close();}});
 function showAbout(){modal('Рабочее пространство','<p>Интерактивный прототип архитектурного редактора: план, 3D и свойства элементов в одном окне.</p><p>Проект сохраняется <strong>только в этом браузере</strong>. Чтобы перенести его на другое устройство, используйте «Экспорт → Проект JSON» и «Открыть».</p><p>Режим «Все этажи» показывает здание целиком. Новые элементы создаются на рабочем этаже. Все элементы можно выделять и перемещать. Проекты доступны через меню «Мои проекты». Полноценные BIM-расчёты, IFC и командная работа запланированы на следующих этапах.</p>');}
 $('about-button').onclick=showAbout;
-function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить к выделению','Shift + щелчок'],['Изменение размера','Квадратные ручки'],['Поворот','Круглая ручка'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверной проём','G → стена → размеры'],['Вставить дверь','D → пустой проём'],['Окно','O'],['Контекстное меню','Правая кнопка / Shift+F10'],['Перекрытие','P → точки → Enter'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
+function showHelp(){modal('Быстрый старт','<p>Выберите стену на плане, измените её размеры справа и откройте 3D. Для построения стены укажите две точки.</p>'+[['Выбор / перемещение','V → перетащить'],['Выделение рамкой','Мышь / Shift + мышь'],['Добавить или убрать из выделения','Ctrl + щелчок'],['Добавить рамкой','Ctrl + перетаскивание'],['Изменение размера','Квадратные ручки'],['Поворот','Круглая ручка'],['Шаг поворота 15°','Shift'],['Отключить привязки','Alt'],['Точный сдвиг','Стрелки / Shift+стрелки'],['Стена','W'],['Дверной проём','G → стена → размеры'],['Вставить дверь','D → пустой проём'],['Окно','O'],['Контекстное меню','Правая кнопка / Shift+F10'],['Перекрытие','P → точки → Enter'],['Фундаменты / каркас','Выберите тип слева'],['Размер','M → две точки'],['Угловой размер','A → вершина → по точке на лучах'],['Помещение','R → два угла'],['Панорама плана','Пробел + перетаскивание'],['Масштаб','Колесо мыши'],['Вписать модель','F'],['Отмена / повтор','Ctrl+Z / Ctrl+Shift+Z'],['Дублировать','Ctrl+D'],['Удалить','Delete'],['Завершить инструмент','Esc']].map(([label,key])=>`<div class="shortcut-row"><span>${label}</span><kbd>${key}</kbd></div>`).join(''));}
 $('help-button').onclick=showHelp;
 $('settings-button').onclick=()=>{modal('Отображение',`<p>Настройки сохраняются на этом устройстве.</p>${[['dark','Тёмная тема'],['textures','Текстуры материалов'],['grid','Сетка'],['labels','Названия помещений'],['dimensions','Размеры'],['snap','Привязка к краям, серединам и центрам'],['axes','Оси деталей и привязки к осям'],['guides','Направляющие и выравнивание']].map(([key,label])=>`<label class="settings-option">${label}<input class="toggle" type="checkbox" data-pref="${key}" ${preferences[key]?'checked':''}></label>`).join('')}`);$$('[data-pref]').forEach(input=>input.onchange=()=>{preferences[input.dataset.pref]=input.checked;savePreferences();render();});};
 const surface=$('drawing-surface');
@@ -528,13 +626,16 @@ surface.addEventListener('pointerdown',event=>{
  if(event.button!==0||!event.isPrimary)return;
  const p=worldPoint(event);
  if(tool!=='select'){choosePoint(snapped(p,event),event);return;}
- const handle=event.target.closest('[data-handle]'),element=event.target.closest('[data-element]');
- const id=handle?.dataset.owner||element?.dataset.element;
+ const handle=event.target.closest('[data-handle]'),ctrl=event.ctrlKey||event.metaKey;
+ let element=event.target.closest('[data-element]');
+ if(handle&&ctrl)element=document.elementsFromPoint(event.clientX,event.clientY).find(node=>node.hasAttribute('data-element'));
+ const id=element?.dataset.element||handle?.dataset.owner;
+ const extend=extendSelection(event);
  surface.setPointerCapture(event.pointerId);
- if(handle||id&&!event.shiftKey){
+ if((handle&&!ctrl)||id&&!extend){
   beginElementDrag(id,p,handle?.dataset.handle||null);
   if(movement){movement.pointerStart=pointerPosition(event);surface.classList.add('moving-element');}
- }else marquee={pointerStart:pointerPosition(event),worldStart:p,extend:event.shiftKey,id,active:false};
+ }else marquee={pointerStart:pointerPosition(event),worldStart:p,extend,id,active:false};
 });
 surface.addEventListener('pointermove',event=>{
  if(pan){const matrix=$('plan-svg').getScreenCTM();camera.x=pan.camera.x-(event.clientX-pan.x)/matrix.a;camera.y=pan.camera.y-(event.clientY-pan.y)/matrix.d;updateViewBox();return;}
@@ -570,7 +671,7 @@ surface.addEventListener('pointerup',event=>{
 });
 surface.addEventListener('pointercancel',()=>{clearMarquee();cancelElementDrag();endPan();});
 surface.addEventListener('lostpointercapture',()=>{if(marquee||movement||pan){clearMarquee();cancelElementDrag();endPan();}});
-surface.addEventListener('dblclick',()=>{if(tool==='slab')finishSlab();});
+surface.addEventListener('dblclick',()=>{if(drawingContour())finishContour();});
 surface.addEventListener('wheel',event=>{event.preventDefault();zoom(Math.exp(Math.max(-100,Math.min(100,event.deltaY))*.0017),worldPoint(event));},{passive:false});
 document.addEventListener('keydown',event=>{
  if(event.target.closest('input,select,textarea')||$('modal').open)return;
@@ -582,7 +683,7 @@ document.addEventListener('keydown',event=>{
   showEditorMenu({target,clientX:left+width/2,clientY:top+height/2},target.dataset.elementId||singleSelection(),null);return;
  }
  const ctrl=event.ctrlKey||event.metaKey;
- const pressed=event.key.toLowerCase(),key=ctrl&&/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&tool==='slab'){finishSlab();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',g:'doorway',d:'door',o:'window',p:'slab',m:'dimension',a:'angle',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
+ const pressed=event.key.toLowerCase(),key=ctrl&&/^[а-яё]$/.test(pressed)&&event.code.startsWith('Key')?event.code.slice(3).toLowerCase():pressed;if(ctrl&&key==='z'&&(movement||marquee||scene?.cancelSelection())){event.preventDefault();clearMarquee();cancelElementDrag();return;}if(ctrl&&key==='z'){event.preventDefault();event.shiftKey?redo():undo();return;}if(ctrl&&key==='y'){event.preventDefault();redo();return;}if(ctrl&&key==='d'){event.preventDefault();copySelected();return;}if(ctrl&&key==='s'){event.preventDefault();save();toast(saveFailed?'Скачайте проект через «Экспорт».':'Проект сохранён на устройстве.');return;}if(ctrl)return;if(event.code==='Space'){event.preventDefault();spaceHeld=true;return;}if(key==='escape'){clearMarquee();cancelElementDrag();draft=[];setTool('select');closeMenus();return;}if(['arrowleft','arrowright','arrowup','arrowdown'].includes(key)&&selectedIds.size){event.preventDefault();const step=event.shiftKey?.5:.05;nudgeSelected(key==='arrowleft'?-step:key==='arrowright'?step:0,key==='arrowup'?-step:key==='arrowdown'?step:0);return;}if(key==='enter'&&drawingContour()){event.preventDefault();finishContour();return;}if(['delete','backspace'].includes(key)){event.preventDefault();removeSelected();return;}if(key==='f'){fitPlan();scene?.reset();return;}if(key==='?'){showHelp();return;}const mapping={v:'select',w:'wall',g:'doorway',d:'door',o:'window',p:'slab',m:'dimension',a:'angle',r:'room'};if(mapping[key]){event.preventDefault();setTool(mapping[key]);}});
 document.addEventListener('keyup',event=>{if(event.code==='Space')spaceHeld=false;});window.addEventListener('blur',()=>{spaceHeld=false;clearMarquee();cancelElementDrag();endPan();});
 window.addEventListener('storage',event=>{if([STORAGE_KEY,CATALOG_KEY].includes(event.key)&&event.newValue)toast('Проект изменён в другой вкладке. Скачайте текущую копию перед перезагрузкой.');});
 if(loadWarning)toast(loadWarning);

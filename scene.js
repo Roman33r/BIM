@@ -11,6 +11,7 @@ import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,rimBoardSegments,scr
 import {elementTilts} from './spatial.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
+import {isFastener,fastenerRange,capGeometry,fastenerObject} from './hardware.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
@@ -115,7 +116,14 @@ export function createScene(container,onSelect,gestures={}){
  }
  function buildStructure(layer,e,selected,textured,members=[]){
   const shape=STRUCTURE_TYPES[e.type].shape,mat=material(e.material,selected,textured),bottom=e.elevation-e.height;
-  if(e.type==='rim'){
+  if(isFastener(e)){
+   const node=fastenerObject(THREE,e,mat);node.position.set(e.x-6,e.elevation,e.y-4.5);node.rotation.y=-e.rotation*Math.PI/180;layer.add(node);
+  }else if(isPileCap(e)){
+   const geometry=capGeometry(THREE,e);geometry.rotateX(Math.PI/2);
+   const mesh=new THREE.Mesh(geometry,mat);mesh.position.set(e.x-6,e.elevation,e.y-4.5);mesh.rotation.y=-e.rotation*Math.PI/180;
+   mesh.userData.elementId=e.id;mesh.castShadow=true;mesh.receiveShadow=true;layer.add(mesh);
+   mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry),selected?apertureOutline:plainSeams));
+  }else if(e.type==='rim'){
    for(const board of rimBoardSegments(e,members)){
     const mesh=localBox(layer,board,0,wallLength(board),bottom+board.bottom,bottom+board.top,mat,e.id,board.thickness);
     if(mesh)mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry),selected?apertureOutline:textured?woodSeams:plainSeams));
@@ -223,7 +231,7 @@ export function createScene(container,onSelect,gestures={}){
   floorLayout=layout;currentFloor=floor;dark=!!opts.dark;section=!!opts.section;
   clearLayers();
   ground.position.y=Math.min(...levels.map(level=>level.elevation+Math.min(-.24,
-   ...level.slabs.map(slab=>-slab.thickness-.04),...(level.structures||[]).map(e=>e.elevation-e.height-.12))));
+   ...level.slabs.map(slab=>-slab.thickness-.04),...(level.structures||[]).map(e=>(isFastener(e)?fastenerRange(e)[0]:e.elevation-e.height)-.12))));
   for(const level of levels){
    const layer=new THREE.Group(),active=level.id===floor.id;
    layer.position.y=level.elevation;group.add(layer);

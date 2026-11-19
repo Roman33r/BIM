@@ -2,6 +2,7 @@ import {migrateElements,FURNITURE_TYPES,listElements} from './elements.js';
 import {isSimplePolygon} from './transforms.js';
 import {angleValue} from './annotations.js';
 import {STRUCTURE_TYPES,isPileCap,isRoundStructure,syncPileCaps} from './structures.js';
+import {isFastener,validateCapHoles} from './hardware.js';
 import {canTiltElement,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
 export const clone = value => structuredClone(value);
@@ -83,7 +84,7 @@ export function validateProject(value){
    const spec=STRUCTURE_TYPES[e.type];
    id(e.id);
    if(e.kind!==spec.kind||!str(e.name)||!str(e.material)||!num(e.elevation,-100,isPileCap(e)?130:100)
-    ||!num(e.height,isPileCap(e) ? .005 : .02,30))fail();
+    ||!num(e.height,isFastener(e)?.0005:isPileCap(e)?.005:.02,isFastener(e)?2:30))fail();
    if(spec.shape==='line'){
     if(!point(e.a)||!point(e.b)||!num(wallLength(e),.05,100)||!num(e.thickness,.02,10))fail();
     if(spec.sizes.gauge!==undefined&&!num(e.gauge,.001,Math.min(e.thickness*.9,e.height*.45)))fail();
@@ -91,12 +92,17 @@ export function validateProject(value){
     if(!Array.isArray(e.points)||e.points.length<3||e.points.length>200||!e.points.every(point)
      ||polygonArea(e.points)<.1||!isSimplePolygon(e.points)||!num(e.rotation??0,-360,360))fail();
    }else if(!point(e))fail();
-   else if(spec.shape==='round'){
+   else if(spec.shape==='fastener'){
+    if(!num(e.diameter,.001,.2)||!num(e.headDiameter,e.diameter/(e.type==='nut'?Math.cos(Math.PI/6):1)+.001,.4)||!num(e.rotation,-360,360))fail();
+    if(spec.sizes.headHeight!==undefined&&!num(e.headHeight,.0005,.1))fail();
+    if(spec.sizes.threadPitch!==undefined&&!num(e.threadPitch,.0005,Math.min(.02,e.height/2)))fail();
+   }else if(spec.shape==='round'){
     if(!num(e.diameter,.05,e.type==='screwPile'?9.99:10))fail();
     if(e.type==='screwPile'&&(!num(e.bladeDiameter,e.diameter+.01-1e-9,10)||!num(e.bladeThickness,.002,.06)
      ||!num(e.bladePitch,.01,e.height*.7-e.bladeThickness)))fail();
    }
    else if(!num(e.w,.05,30)||!num(e.d,.05,30)||!num(e.rotation,-360,360))fail();
+   if(isPileCap(e))validateCapHoles(e);
   }
   const piles=new Set(f.structures.filter(isRoundStructure).map(e=>e.id)),capped=new Set();
   for(const e of f.structures){

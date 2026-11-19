@@ -13,7 +13,7 @@ test('all construction types render, round-trip and participate in plan fitting'
  const project=createEmptyProject(),floor=project.floors[0];
  for(const type of Object.keys(STRUCTURE_TYPES)){
   const element=makeStructure(type,'s-'+type,points);
-  assert.equal(element.elevation,element.kind==='foundation'?0:element.height);
+  assert.equal(element.elevation,element.kind==='framing'?element.height:0);
   floor.structures.push(element);
  }
  validateProject(project);

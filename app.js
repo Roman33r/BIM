@@ -14,6 +14,7 @@ import {canTiltElement,setElementTilt,tiltFields} from './spatial.js';
 import {GUIDE_STYLES} from './construction-guides.js';
 import {pileAreaPoints} from './pile-layout.js';
 import {snapToGrid,validGridStep} from './grid.js';
+import {isFastener,isRingFastener,capHoles,capHoleSettings} from './hardware.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
 const STORAGE_KEY=LEGACY_KEY,PREFS_KEY='bim-workspace-preferences-v1';
@@ -101,7 +102,7 @@ function renderPlanView(){
  let structurePreview;
  if(tool==='structure'&&effectiveHover){
   const shape=STRUCTURE_TYPES[structureType].shape;
-  if(shape==='round'||shape==='rect')structurePreview=makeStructure(structureType,'',[effectiveHover]);
+  if(shape==='round'||shape==='rect'||shape==='fastener')structurePreview=makeStructure(structureType,'',[shape==='fastener'&&preferences.snap?nearestCapHole(effectiveHover)?.point||effectiveHover:effectiveHover]);
   else if(shape==='line'&&points.length===2)structurePreview=makeStructure(structureType,'',points);
  }
  const measurement=tool==='measure'
@@ -187,6 +188,12 @@ function render(){
 function propertyInput(key,label,value,{min=0,max=100000,step=10,unit='мм'}={}){return `<div class="property-row"><label for="property-${key}">${label}</label><div class="input-unit"><input id="property-${key}" data-property="${key}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><span>${unit}</span></div></div>`;}
 function sectionTitle(title){return `<h2 class="section-heading">${title}</h2>`;}
 function structureProperties(e){
+ if(isFastener(e)){
+  const ring=isRingFastener(e),nutFactor=e.type==='nut'?Math.cos(Math.PI/6):1,inputs=[['diameter',ring?'Диаметр отверстия':'Диаметр стержня',e.diameter,1,Math.floor((e.headDiameter-.001)*nutFactor*1000)],['height',ring?'Толщина':'Длина стержня',e.height,Math.max(.5,(e.threadPitch||0)*2000),2000],['headDiameter',ring?'Наружный габарит':'Габарит головки',e.headDiameter,Math.ceil(e.diameter/nutFactor*1000)+1,400]];
+  if(e.headHeight!==undefined)inputs.push(['headHeight','Высота головки',e.headHeight,.5,100]);
+  if(e.threadPitch!==undefined)inputs.push(['threadPitch','Шаг резьбы',e.threadPitch,.5,Math.min(20,e.height*500)]);
+  return inputs.map(([key,label,value,min,max])=>propertyInput(key,label,Number((value*1000).toFixed(2)),{min,max,step:.01})).join('')+'<p class="property-note">Стержень направлен вниз от отметки установки. Поворот и наклоны доступны во вкладке «Положение».</p>';
+ }
  const dimensions=[],shape=STRUCTURE_TYPES[e.type].shape;
  const screw=e.type==='screwPile';
  if(shape==='line')dimensions.push(['length','Длина',wallLength(e),50,100000],['thickness',e.type==='rim'?'Ширина пакета':'Ширина сечения',e.thickness,20,10000]);
@@ -199,7 +206,11 @@ function structureProperties(e){
  const heightLabel=e.kind==='framing'?'Высота сечения':shape==='round'?'Длина сваи':shape==='contour'?'Толщина плиты':isPileCap(e)?'Толщина пластины':'Высота';
  dimensions.push(['height',heightLabel,e.height,screw?Math.ceil((e.bladePitch+e.bladeThickness)*1000/.7):isPileCap(e)?5:20,30000]);
  if(e.gauge!==undefined)dimensions.push(['gauge','Толщина профиля',e.gauge,1,Math.floor(1000*Math.min(.9*e.thickness,.45*e.height))]);
- return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('')
+ const holes=isPileCap(e)?capHoleSettings(e):null;
+ const holeFields=holes?sectionTitle('Крепёжные отверстия')+`<div class="property-row"><label for="property-holeCount">Количество</label><select id="property-holeCount" data-property="holeCount">${[0,2,4,8].map(count=>`<option value="${count}" ${holes.count===count?'selected':''}>${count||'Без отверстий'}</option>`).join('')}</select></div>`
+  +propertyInput('holeDiameter','Диаметр отверстия',Number((holes.diameter*1000).toFixed(2)),{min:3,max:60,step:.1})
+  +propertyInput('holeInset','От края до центра',Number((holes.inset*1000).toFixed(2)),{min:0,max:15000,step:.1})+'<p class="property-note">Сквозные отверстия. Их центры доступны для привязки деталей.</p>':'';
+ return dimensions.map(([key,label,value,min,max])=>propertyInput(key,label,Math.round(1000*value),{min,max,step:1})).join('')+holeFields
   +(e.type==='rim'?`<p class="property-note">Пакет из 3 досок ${fmt(e.height*1000)} × ${fmt(e.thickness*1000/3)} мм. На прямых углах торцы досок соединяются вразбежку.</p>`:'');
 }
 function positionProperties(e,host){
@@ -207,14 +218,14 @@ function positionProperties(e,host){
   +'<p class="property-note">Проём перемещается вдоль стены. Наклон задаётся в свойствах стены.</p>';
  const pos=elementPosition(e),rotatable=!isRoundStructure(e)&&!(e.kind==='guide'&&e.type==='point'),tiltable=canTiltElement(e);
  const reference=e.mode==='angle'?'Вершина угла':e.a?'Начало элемента':e.points?'Центр по вершинам контура'
-  :e.kind==='guide'?'Опорная точка':isRoundStructure(e)||isPileCap(e)?'Центр элемента':'Начальный угол элемента';
+  :e.kind==='guide'?'Опорная точка':isRoundStructure(e)||isPileCap(e)||isFastener(e)?'Центр элемента':'Начальный угол элемента';
  let fields=`<p class="property-note position-reference">${reference}</p>`;
  fields+=propertyInput('x','Координата X',Math.round(pos.x*1000),{min:-1000000,max:1000000,step:1})
   +propertyInput('y','Координата Y',Math.round(pos.y*1000),{min:-1000000,max:1000000,step:1});
  if(isStructure(e)){
   if(isPileCap(e)&&e.pileId!==undefined){
    fields+=`<div class="property-row"><span class="field-label">Верх от отметки этажа</span><strong>${fmt(e.elevation*1000)} мм</strong></div><p class="property-note">Оголовок следует за сваей. Углы X и Y задают его дополнительный наклон.</p>`;
-  }else fields+=propertyInput('elevation','Верх от отметки этажа',Math.round(e.elevation*1000),{min:-100000,max:isPileCap(e)?130000:100000,step:1});
+  }else fields+=propertyInput('elevation',isFastener(e)?'Отметка установки':'Верх от отметки этажа',Math.round(e.elevation*1000),{min:-100000,max:isPileCap(e)?130000:100000,step:1});
  }
  if(rotatable||tiltable)fields+=sectionTitle('Поворот');
  const degrees={min:-360,max:360,step:.1,unit:'°'};
@@ -302,6 +313,7 @@ function renderInspector(){
  }
  if(isRoundStructure(e))body+=`<button type="button" class="button opening-action" id="pile-cap-action"><i data-icon="pile-cap"></i>${cap?'Выбрать оголовок':'Добавить оголовок'}</button>`;
  if(isPileCap(e)&&e.pileId!==undefined)body+=`<button type="button" class="button opening-action" id="detach-pile-cap">Отсоединить от сваи</button>`;
+ if(isPileCap(e))body+=`<button type="button" class="button opening-action" id="cap-fasteners-action">Крепёж в отверстия</button>`;
  body+='</section>';
  body+=`<section class="property-section" ${inspectorTab==='position'?'':'hidden'}>${positionProperties(e,host)}</section>`;
  if(e.kind==='wall')body+=`<section class="property-section">${sectionTitle('Конструкция')}<div class="property-row"><label for="property-loadBearing">Несущая стена</label><input class="toggle" id="property-loadBearing" data-property="loadBearing" type="checkbox" ${e.loadBearing?'checked':''}></div><div class="property-row"><span class="field-label">Проёмы</span><span class="value-muted">${e.openings.length}</span></div><div class="property-row"><span class="field-label">Объём брутто</span><span class="value-muted">${fmt(wallLength(e)*e.thickness*e.height,2)} м³</span></div></section>`;
@@ -324,6 +336,10 @@ function renderInspector(){
  if($('door-fill-action'))$('door-fill-action').onclick=()=>changeDoor(e.id,e.kind==='doorway');
  if($('pile-cap-action'))$('pile-cap-action').onclick=()=>selectOrAddCap(e);
  if($('detach-pile-cap'))$('detach-pile-cap').onclick=()=>mutate(()=>delete e.pileId,'Оголовок отсоединён');
+ if($('cap-fasteners-action'))$('cap-fasteners-action').onclick=()=>{
+  if(!capHoles(e).length){toast('Включите отверстия оголовка в свойствах.');return;}
+  chooseStructure('fastener',e);
+ };
 }
 function updateProperty(input){
  const item=selected();
@@ -335,7 +351,7 @@ function updateProperty(input){
   return;
  }
  const tilt=tiltFields.includes(key),degrees=key==='angle'||tilt;
- const value=input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(degrees||key==='divisions'?1:1000):input.value.trim();
+ const value=key==='holeCount'?Number(input.value):input.type==='checkbox'?input.checked:input.type==='number'?input.valueAsNumber/(degrees||key==='divisions'?1:1000):input.value.trim();
  mutate(()=>{const {element:e,host}=item;
   if(typeof value==='number'){
    if(!Number.isFinite(value))throw new Error('Введите корректное число.');
@@ -363,7 +379,7 @@ function updateToolHint(){
  if(tool==='measure')hint=draft.length?'Линейка · Укажите вторую точку · Shift выравнивает замер'
   :measuredLine?.floorId===floorId?'Линейка · Щёлкните для нового замера · Esc закрывает замер':'Линейка · Укажите первую точку · Esc закрывает замер';
  if(tool==='structure'){
-  const spec=STRUCTURE_TYPES[structureType],hintByShape={round:'Укажите центр сваи',rect:'Укажите центр опоры',line:draft.length?'Укажите конец элемента':'Укажите начало элемента',contour:hints.slab};
+  const spec=STRUCTURE_TYPES[structureType],hintByShape={round:'Укажите центр сваи',rect:'Укажите центр опоры',fastener:'Укажите место установки · Центры отверстий доступны для привязки',line:draft.length?'Укажите конец элемента':'Укажите начало элемента',contour:hints.slab};
   hint=`${spec.name} · ${structureType==='pileCap'?'Щёлкните по свае или укажите свободную точку':hintByShape[spec.shape]}`;
  }
  $('canvas-hint').textContent=hint;
@@ -451,6 +467,7 @@ function choosePoint(p,event){
    }else addStructure([p]);
    return;
   }
+  if(spec.shape==='fastener'){addStructure([p],structureType,null,event.altKey);return;}
   if((spec.shape==='line'||spec.shape==='contour')&&event.detail>1)return;
   if(spec.shape==='line'||spec.shape==='contour'){
    draft.push(p);hover=null;
@@ -523,10 +540,28 @@ function selectOrAddCap(pile){
  if(existing)select(existing.id);
  else addStructure([{x:pile.x,y:pile.y}],'pileCap',pile);
 }
-function addStructure(points,type=structureType,pile){
+function nearestCapHole(point){
+ let nearest=null,distance=pixelUnit()*10;
+ for(const cap of floor().structures.filter(isPileCap))for(const hole of capHoles(cap)){
+  const current=length(sub(point,hole));
+  if(current<distance){distance=current;nearest={point:hole,cap};}
+ }
+ return nearest;
+}
+function installCapFasteners(cap,type){
+ const holes=capHoles(cap),spec=STRUCTURE_TYPES[type];
+ if(!isRingFastener({type})&&spec.sizes.diameter>capHoleSettings(cap).diameter+1e-9){toast('Крепёж шире отверстия. Увеличьте диаметр отверстий или выберите меньший крепёж.');return;}
+ const created=holes.filter(p=>!floor().structures.some(e=>isFastener(e)&&e.type===type&&Math.hypot(e.x-p.x,e.y-p.y)<1e-6&&Math.abs(e.elevation-cap.elevation)<1e-6))
+  .map(p=>({...makeStructure(type,uid('КП'),[p]),elevation:cap.elevation,rotation:cap.rotation}));
+ if(!created.length){toast('Такой крепёж уже установлен во всех отверстиях.');return;}
+ $('modal').close();setTool('select');
+ mutate(()=>{floor().structures.push(...created);setSelection(created.map(e=>e.id));},'Установлено крепежей · '+created.length);
+}
+function addStructure(points,type=structureType,pile,disableSnap=false){
  const spec=STRUCTURE_TYPES[type],origin=pile?[{x:pile.x,y:pile.y}]:points;
- const e=makeStructure(type,uid(spec.kind==='foundation'?'ФН':'КР'),origin);
+ const e=makeStructure(type,uid(spec.kind==='foundation'?'ФН':spec.kind==='fastener'?'КП':'КР'),origin);
  if(pile)e.pileId=pile.id;
+ if(isFastener(e)&&preferences.snap&&!disableSnap){const mount=nearestCapHole(points[0]);if(mount){e.x=mount.point.x;e.y=mount.point.y;e.elevation=mount.cap.elevation;e.rotation=mount.cap.rotation;}}
  hover=null;editorFeedback={};
  mutate(()=>{floor().structures.push(e);setSelection([e.id]);},pile?'Оголовок закреплён на свае':e.name+' · добавлено');
 }
@@ -734,10 +769,10 @@ function chooseConstruction(){
   constructionType=button.dataset.construction;inspectorTab='geometry';$('modal').close();setTool('construction');
  });
 }
-function chooseStructure(category){
+function chooseStructure(category,cap){
  const options=Object.entries(STRUCTURE_TYPES).filter(([,spec])=>spec.kind===category);
- const methods={round:'По точке',rect:'По точке',line:'По двум точкам',contour:'По контуру'};
- modal(category==='foundation'?'Фундаменты':'Каркас перекрытия',`<div class="structure-picker">
+ const methods={round:'По точке',rect:'По точке',fastener:'По точке · Размеры в свойствах',line:'По двум точкам',contour:'По контуру'};
+ modal(category==='foundation'?'Фундаменты':category==='fastener'?cap?'Крепёж в отверстия оголовка':'Крепёж':'Каркас перекрытия',`<div class="structure-picker">
   ${category==='foundation'?`<button type="button" id="pile-area-button"><i data-icon="pile"></i><span><strong>Сваи по области</strong><small>Края и деление пополам · шаг ${fmt(pileSpacing*1000)} мм</small></span></button>`:''}
   ${options.map(([type,spec])=>`<button type="button" data-structure="${type}">
    <i data-icon="${spec.icon}"></i><span><strong>${spec.name}</strong><small>${type==='rim'?'3 доски 200 × 50 мм · ':''}${methods[spec.shape]}</small></span>
@@ -745,6 +780,7 @@ function chooseStructure(category){
  </div>`);
  if($('pile-area-button'))$('pile-area-button').onclick=choosePileArea;
  $$('[data-structure]').forEach(button=>button.onclick=()=>{
+  if(cap){installCapFasteners(cap,button.dataset.structure);return;}
   structureType=button.dataset.structure;inspectorTab='geometry';$('modal').close();setTool('structure');
  });
 }

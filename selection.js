@@ -5,7 +5,7 @@ import {floorTiltProjections} from './spatial.js';
 
 export const AXIS_TYPES = Object.freeze({
  wall:'Стены', doorway:'Дверные проёмы', door:'Двери', window:'Окна', slab:'Перекрытия',
- furniture:'Мебель и оборудование', room:'Помещения', dimension:'Размеры', foundation:'Фундаменты', framing:'Каркас перекрытия'
+ furniture:'Мебель и оборудование', room:'Помещения', dimension:'Размеры', foundation:'Фундаменты', framing:'Каркас перекрытия',fastener:'Крепёж'
 });
 
 export function* floorElements(floor) {

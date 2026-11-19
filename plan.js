@@ -11,6 +11,7 @@ import {floorTiltProjections} from './spatial.js';
 import {guidePoints,guideDash} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
 import {validGridStep} from './grid.js';
+import {capHoles,isFastener,isRingFastener} from './hardware.js';
 const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const n=value=>Number(value.toFixed(4));
 const path=(d,attrs='')=>`<path d="${d}" ${attrs}/>`;
@@ -43,6 +44,19 @@ function constructionPlan(floor,selectedIds,unit){
  return output;
 }
 function structureShape(element,attrs='',members=[]){
+ if(isPileCap(element)){
+  const outer=elementFootprint(element),holes=capHoles(element);
+  const outline=`M${outer.map(p=>`${n(p.x)} ${n(p.y)}`).join('L')}Z`;
+  const voids=holes.map(({x,y,radius:r})=>`M${n(x+r)} ${n(y)}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`).join('');
+  return `<path class="perforated-pile-cap" data-hole-count="${holes.length}" d="${outline+voids}" fill-rule="evenodd" ${attrs}/>`;
+ }
+ if(isFastener(element)){
+  const {x,y,headDiameter,diameter,type,rotation}=element,r=headDiameter/2;
+  const outer=['bolt','anchor','nut'].includes(type)?Array.from({length:6},(_,i)=>({x:x+r*Math.cos(i*Math.PI/3+rotation*Math.PI/180),y:y+r*Math.sin(i*Math.PI/3+rotation*Math.PI/180)})):null;
+  const outline=outer?`M${outer.map(p=>`${p.x} ${p.y}`).join('L')}Z`:`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0Z`;
+  const hole=isRingFastener(element)?`M${x+diameter/2} ${y}a${diameter/2} ${diameter/2} 0 1 0 ${-diameter} 0a${diameter/2} ${diameter/2} 0 1 0 ${diameter} 0Z`:'';
+  return `<path class="fastener-head" d="${outline+hole}" fill-rule="evenodd" ${attrs}/>`;
+ }
  if(isRoundStructure(element))return `<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(pileFootprintDiameter(element)/2)}" ${attrs}/>`;
  if(element.type==='rim')return rimBoardSegments(element,members).map(board=>`<polygon class="rim-board" points="${coords(elementFootprint({...element,...board}))}" ${attrs}/>`).join('');
  return `<polygon points="${coords(elementFootprint(element))}" ${attrs}/>`;
@@ -50,11 +64,16 @@ function structureShape(element,attrs='',members=[]){
 function structurePlan(element,selected,fill,dark,members=[]){
  const foundation=element.kind==='foundation',stroke=selected?'#2164ff':dark?'#b8c9dd':'#54677c';
  const attrs=`fill="${fill}" fill-opacity="${foundation&&!selected?.72:1}" stroke="${stroke}" stroke-width="${selected?1.9:1.2}"`
-  +(foundation?' stroke-dasharray="5 3"':'')+' vector-effect="non-scaling-stroke"';
+  +(foundation&&!isPileCap(element)?' stroke-dasharray="5 3"':'')+' vector-effect="non-scaling-stroke"';
  let geometry=element.type==='screwPile'
   ?structureShape(element,`fill="transparent" stroke="${stroke}" stroke-dasharray="4 3" stroke-width="${selected?1.9:1.2}" vector-effect="non-scaling-stroke"`)
    +`<circle cx="${n(element.x)}" cy="${n(element.y)}" r="${n(element.diameter/2)}" fill="${fill}" stroke="${stroke}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`
   :structureShape(element,attrs,members);
+ if(isFastener(element)){
+  const {x,y}=element,r=element.headDiameter*.28,angle=(element.rotation||0)*Math.PI/180;
+  if(element.type==='screw')geometry+=trace([{x:x-r*Math.cos(angle),y:y-r*Math.sin(angle)},{x:x+r*Math.cos(angle),y:y+r*Math.sin(angle)}],`stroke="${stroke}" stroke-width=".0008"`)+trace([{x:x+r*Math.sin(angle),y:y-r*Math.cos(angle)},{x:x-r*Math.sin(angle),y:y+r*Math.cos(angle)}],`stroke="${stroke}" stroke-width=".0008"`);
+  geometry+=`<circle cx="${x}" cy="${y}" r="${element.headDiameter/2}" fill="transparent" stroke="transparent" stroke-width="8" vector-effect="non-scaling-stroke"/>`;
+ }
  if(element.a&&element.thickness<.15){
   geometry+=trace([element.a,element.b],'stroke="transparent" fill="none" stroke-width="9" vector-effect="non-scaling-stroke"');
  }
@@ -162,6 +181,7 @@ export function renderPlan(floor,{selectedId,selectedIds=new Set(selectedId?[sel
  }
  for(const end of hidden)content+=`<g class="hidden-wall-end" data-hidden-wall="${esc(end.id)}" fill="none" stroke="${dark?'#e6e9f0':'#263751'}" stroke-dasharray="3 2" stroke-width="1.1" pointer-events="none">${end.strokes.map(points=>trace(points,'vector-effect="non-scaling-stroke"')).join('')}</g>`;
  for(const e of structures)if(e.kind==='framing')content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark,structures);
+ for(const e of structures)if(isFastener(e))content+=structurePlan(e,selectedIds.has(e.id),surfaceFill(e.material),dark);
  for(const [id,contour] of floorTiltProjections(floor)){
   const stroke=selectedIds.has(id)?(dark?'#bfa6ff':'#6442ae'):(dark?'#a69ac2':'#786789');
   const outline=[...contour,contour[0]];

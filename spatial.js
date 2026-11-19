@@ -1,8 +1,9 @@
 import {elementFootprint,elementFrame,normalAngle} from './transforms.js';
 import {isPileCap,isRoundStructure,isStructure,rimBoardSegments,screwBladeMesh} from './structures.js';
+import {isFastener,fastenerRange} from './hardware.js';
 
 export const tiltFields=['tiltX','tiltY'];
-export const canTiltElement=e=>['wall','slab','furniture','foundation','framing'].includes(e.kind);
+export const canTiltElement=e=>['wall','slab','furniture','foundation','framing','fastener'].includes(e.kind);
 const radians=angle=>angle*Math.PI/180;
 
 export function setElementTilt(element,axis,value){
@@ -13,6 +14,7 @@ export function setElementTilt(element,axis,value){
 }
 
 function verticalRange(e){
+ if(isFastener(e))return fastenerRange(e);
  if(isStructure(e))return [e.elevation-e.height,e.elevation];
  if(e.kind==='slab')return [-e.thickness,0];
  return [0,e.height];
@@ -23,7 +25,7 @@ export function elementTilts(e,support){
  for(const item of support?[e,support]:[e]){
   if(!item.tiltX&&!item.tiltY)continue;
   const [bottom,top]=verticalRange(item),{center}=elementFrame(item);
-  const z=isRoundStructure(item)?top:isPileCap(item)?bottom:(bottom+top)/2;
+  const z=isFastener(item)?item.elevation:isRoundStructure(item)?top:isPileCap(item)?bottom:(bottom+top)/2;
   tilts.push({pivot:{...center,z},x:radians(item.tiltX||0),y:radians(item.tiltY||0)});
  }
  return tilts;

@@ -2,6 +2,7 @@ import {findElement} from './elements.js';
 import {angleGeometry} from './annotations.js';
 import {isLinearStructure,isRoundStructure,isPileCap,pileFootprintDiameter} from './structures.js';
 import {guidePoints} from './construction-guides.js';
+import {capHoles,isFastener} from './hardware.js';
 export const add=(a,b)=>({x:a.x+b.x,y:a.y+b.y});
 export const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
 export const mul=(a,k)=>({x:a.x*k,y:a.y*k});
@@ -20,6 +21,7 @@ export function elementFrame(e,host){
  else if(e.kind==='guide'&&e.type==='point'){origin={x:e.x,y:e.y};w=h=0;}
  else if(e.a){w=length(sub(e.b,e.a));h=e.kind==='wall'||isLinearStructure(e)?e.thickness:0;origin=sub(e.a,mul(v,h/2));}
  else if(isRoundStructure(e)){w=h=pileFootprintDiameter(e);origin={x:e.x-w/2,y:e.y-h/2};}
+ else if(isFastener(e)){w=h=e.headDiameter;origin=sub(sub(e,mul(u,w/2)),mul(v,h/2));}
  else if(isPileCap(e)){w=e.w;h=e.d;origin=sub(sub(e,mul(u,w/2)),mul(v,h/2));}
  else if(e.points){const xs=e.points.map(p=>dot(p,u)),ys=e.points.map(p=>dot(p,v)),left=Math.min(...xs),top=Math.min(...ys);origin=add(mul(u,left),mul(v,top));w=Math.max(...xs)-left;h=Math.max(...ys)-top;}
  else{origin={x:e.x,y:e.y};w=e.w;h=e.d??e.h;}
@@ -62,6 +64,7 @@ export function elementAnchors(e,host){
  if(e.a)points.push({...e.a,role:'Конец'},{...e.b,role:'Конец'});
  if(e.points){for(let i=0;i<e.points.length;i++)points.push({...e.points[i],role:'Угол'},{...midpoint(e.points[i],e.points[(i+1)%e.points.length]),role:'Середина'});}
  if(e.kind==='dimension'){const shift=mul(f.v,e.offset);points.push({...add(e.a,shift),role:'Конец размера'},{...add(e.b,shift),role:'Конец размера'},{...add(f.center,shift),role:'Середина размера'});}
+ if(isPileCap(e))points.push(...capHoles(e).map((p,i)=>({...p,role:'Центр отверстия '+(i+1)})));
  return points;
 }
 export function transformHandles(e,host,unit=.02){
@@ -74,6 +77,10 @@ export function transformHandles(e,host,unit=.02){
   const wall=e.kind==='wall';
   put('a',e.a,wall?'Начало стены':'Начало элемента');put('b',e.b,wall?'Конец стены':'Конец элемента');
   put('thickness',framePoint(f,f.w/2,f.h),wall?'Толщина стены':'Ширина сечения','ns-resize');
+ }
+ else if(isFastener(e)){
+  put('diameter',framePoint(f,f.w/2+e.diameter/2,f.h/2),'Диаметр крепежа','ew-resize');
+  put('headDiameter',framePoint(f,0,f.h/2),'Габарит головки','ew-resize');
  }
  else if(isRoundStructure(e)){
   put('diameter',{x:e.x+e.diameter/2,y:e.y},e.type==='screwPile'?'Диаметр ствола':'Диаметр сваи','ew-resize');
@@ -111,6 +118,12 @@ export function resizeElement(floor,id,handle,point){
    const wall=e.kind==='wall',min=wall ? .05 : Math.max(.02,(e.gauge||0)/.9);
    e.thickness=Math.max(min,Math.min(wall?1.5:10,2*Math.abs(dot(sub(point,f.center),f.v))));
   }else if(['a','b'].includes(handle))e[handle]={...point};
+ }
+ else if(isFastener(e)){
+  const diameter=2*length(sub(point,f.center));
+  const factor=e.type==='nut'?Math.cos(Math.PI/6):1;
+  if(handle==='diameter')e.diameter=Math.max(.001,Math.min(.2,(e.headDiameter-.001)*factor,diameter));
+  if(handle==='headDiameter')e.headDiameter=Math.max(e.diameter/factor+.001,Math.min(.4,diameter));
  }
  else if(isRoundStructure(e)){
   const diameter=2*length(sub(point,f.center));

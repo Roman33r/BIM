@@ -17,7 +17,9 @@ import {snapToGrid,validGridStep} from './grid.js';
 import {isFastener,isRingFastener,capHoles,capHoleSettings} from './hardware.js';
 import {boardMountPoints,boardFasteners,syncBoardMounts} from './board-mounts.js';
 import {canMoveVertical,translateVertical,verticalRange} from './vertical.js';
-import {VIEW_PRESETS,renderOrthographic,orthographicBounds,selectOrthographic,viewDelta,exportOrthographic} from './views.js';
+import {VIEW_PRESETS,renderOrthographic,orthographicBounds,selectOrthographic,viewDelta,exportOrthographic,projectView,feedbackForView} from './views.js';
+import {viewSnapSet,snapViewTranslation} from './view-snapping.js';
+import {createViewCube} from './view-cube.js';
 import {rimBoardSegments} from './structures.js';
 
 const $=id=>document.getElementById(id),$$=selector=>[...document.querySelectorAll(selector)];
@@ -34,6 +36,7 @@ let measuredLine=null;
 let numericDirection=null;
 let inspectorTab='geometry';
 let planDirection='top',verticalMode=false;
+let sceneDirection='orbit',planCube,sceneCube;
 let boardBindingTarget=null,boardBindingMounts=[];
 let selectedIds=new Set(project.floors[0].walls.filter(w=>w.id==='СТ-014').map(w=>w.id)),marquee=null;
 let history=[],future=[],toastTimer,saveFailed=false,movement=null,editorFeedback={},baseCamera={x:-2.1,y:-2.4,w:16.2,h:16},camera={...baseCamera};
@@ -103,7 +106,7 @@ function renderPlanView(){
  updateViewBox();
  if(planDirection!=='top'){
   $('draw-length-form').hidden=true;$('measure-result').hidden=true;
-  $('plan-svg').innerHTML=renderOrthographic([...otherFloors(),floor()],planDirection,{selectedIds,unit:pixelUnit(),dark:preferences.dark,grid:preferences.grid,gridStep:preferences.gridStep,textures:preferences.textures});
+  $('plan-svg').innerHTML=renderOrthographic([...otherFloors(),floor()],planDirection,{selectedIds,unit:pixelUnit(),dark:preferences.dark,grid:preferences.grid,gridStep:preferences.gridStep,textures:preferences.textures,feedback:editorFeedback,bounds:camera,axes:preferences.axes,axisTypes:preferences.axisTypes});
   return;
  }
  const start=drawingStart();
@@ -123,7 +126,7 @@ function renderPlanView(){
   ?{a:draft[0],b:draft[1],offset:Math.max(-100,Math.min(100,linearDimensionOffset(draft[0],draft[1],hover||draft[1])))}:null;
  renderMeasurement(measurement);
  renderDrawingInput(start,drawMeasurement);
- $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||['angle','dimension'].includes(tool),dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:editorFeedback,bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)||dimensionDraft?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea,drawMeasurement,dimensionDraft}).content;
+ $('plan-svg').innerHTML=renderPlan(floor(),{selectedId:singleSelection(),selectedIds,grid:preferences.grid,gridStep:preferences.gridStep,labels:preferences.labels,dimensions:preferences.dimensions||['angle','dimension'].includes(tool),dark:preferences.dark,textures:preferences.textures,interactive:tool==='select',axes:preferences.axes,axisTypes:preferences.axisTypes,unit:pixelUnit(),feedback:feedbackForView(editorFeedback,'top'),bounds:camera,referenceFloors:otherFloors(),draft:['angle','measure'].includes(tool)||dimensionDraft?[]:points,angleDraft:tool==='angle'?points:null,structurePreview,measurement,pileArea,drawMeasurement,dimensionDraft}).content;
 }
 function drawingStart(){
  if(!draft.length)return null;
@@ -388,7 +391,7 @@ function updateProperty(input){
   if(e.kind==='wall'&&e.openings.some(o=>!canPlaceOpening(e,o,o.id)))throw new Error('Размер стены не позволяет сохранить существующие проёмы.');
  });
 }
-async function ensureScene(){if(scene){refreshScene();scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany,context:showEditorMenu,vertical:()=>verticalMode,orientation:value=>{$('scene-projection').value=value;}});scene.setPreset($('scene-projection').value);refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
+async function ensureScene(){if(scene){refreshScene();scene.resize();return;}if(scenePromise)return scenePromise;scenePromise=(async()=>{try{const {createScene}=await import('./scene.js');scene=createScene($('model-container'),select,{start:beginElementDrag,move:previewElementDrag,end:finishElementDrag,cancel:cancelElementDrag,selectMany,context:showEditorMenu,vertical:()=>verticalMode,orientation:value=>{sceneDirection=value;sceneCube?.setView(value);},pose:value=>{sceneDirection=value.preset;sceneCube?.setView(value.preset,value);}});scene.setPreset(sceneDirection);refreshScene();scene.resize();}catch(error){$('model-container').innerHTML='<div class="model-error"><i data-icon="cube"></i>Не удалось запустить 3D.<br>Проверьте поддержку WebGL в браузере.<br>План и редактирование остаются доступны.</div>';hydrateIcons($('model-container'));console.error('3D initialization failed',error);}})();return scenePromise;}
 function setView(next){scene?.clearMovement();view=next;$('viewports').dataset.mode=next;$$('[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===next);button.setAttribute('aria-pressed',String(button.dataset.view===next));});if(next!=='plan')ensureScene();if(tool!=='select'&&next==='3d')setTool('select');}
 const hints={select:'Ctrl + щелчок — добавить к выделению · Правая кнопка — меню',wall:'Укажите начало и конец стены · Shift — ортогонально · Esc — завершить',doorway:'Укажите место на стене и задайте размеры проёма',door:'Нажмите на пустой дверной проём',window:'Нажмите на стену, чтобы разместить окно',slab:'Задайте вершины контура · Enter — создать · Esc — отменить',dimension:'Укажите две точки, затем высоту размерной линии',room:'Задайте два противоположных угла помещения'};
 function updateToolHint(){
@@ -412,7 +415,7 @@ function updateToolHint(){
  $('tool-status').textContent=tool==='select'?'Выбор элементов':hint;
 }
 function setTool(next){
- if(next!=='select'&&planDirection!=='top'){planDirection='top';$('plan-projection').value='top';fitPlan();}
+ if(next!=='select'&&planDirection!=='top'){planDirection='top';planCube?.setView('top');fitPlan();}
  tool=next;draft=[];hover=null;numericDirection=null;$('draw-length').value='';pileArea=null;measuredLine=null;editorFeedback={};
  $('construction-button').classList.toggle('active',next==='construction');
  $('construction-button').setAttribute('aria-pressed',String(next==='construction'));
@@ -423,7 +426,7 @@ function setTool(next){
  updateToolHint();$('drawing-surface').classList.toggle('drawing',next!=='select');
  if(next!=='select'&&view==='3d')setView('plan');renderPlanView();refreshScene();
 }
-function worldPoint(event){const svg=$('plan-svg'),point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;return point.matrixTransform(svg.getScreenCTM().inverse());}
+function worldPoint(event){const svg=$('plan-svg'),point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;const world=point.matrixTransform(svg.getScreenCTM().inverse());return {x:world.x,y:world.y};}
 function snapped(point,event){let p={x:point.x,y:point.y};editorFeedback={};
  if(!event.altKey){
   if(preferences.snap){const result=snapPoint(p,snapTargets(floor(),null,preferences.axes,sceneOptions()),pixelUnit()*8,{alignment:preferences.guides,axes:preferences.axes});editorFeedback=result;if(result.label)p=result.point;}
@@ -667,8 +670,11 @@ function beginElementDrag(id,point,handle=null){
  if(!selectedIds.has(id))select(id);
  else editorFeedback={};
  const ids=[...linkedPileSelection(floor(),selectedIds)];
+ for(const board of floor().structures)if(board.mounts?.length&&board.mounts.every(m=>ids.includes(m.capId))&&!ids.includes(board.id))ids.push(board.id);
  const options=sceneOptions();
- movement={before:snapshot(),id,ids,handle,start:{x:point.x,y:point.y},valid:null,
+ const direction=point.view||planDirection,frame=elementFrame(findElement(floor(),id).element),[low,high]=verticalRange(findElement(floor(),id).element,findElement(floor(),id).host);
+ const depth=point.depth??(['top','bottom'].includes(direction)?floor().elevation+(low+high)/2:['front','back'].includes(direction)?frame.center.y:frame.center.x);
+ movement={before:snapshot(),id,ids,handle,start:{x:point.x,y:point.y,...(point.z!==undefined?{z:point.z}:{}),...(point.view?{view:point.view}:{}),...(point.depth!==undefined?{depth:point.depth}:{})},view:direction,depth,projected:{},valid:null,
   targets:snapTargets(floor(),ids,preferences.axes,options),anchors:selectionAnchors(floor(),ids)};
 }
 function selectionAnchors(current,ids){
@@ -696,9 +702,19 @@ function previewElementDrag(point,shift=false,disableSnap=false,unit=pixelUnit()
   if(drag.handle==='vertical'){
    let delta=point.z!==undefined?point.z-(drag.start.z||0):-dy;
    if(shift)delta=Math.round(delta/.1)*.1;
+   const direction=['top','bottom','orbit'].includes(drag.view)?'front':drag.view;
+   const set=drag.projected[direction]??=viewSnapSet(sourceFloor,drag.ids,direction,sceneOptions());
+   const result=snapViewTranslation(sourceFloor,drag.ids,direction,0,-delta,tol,{set,onlyAxis:'y',snap:preferences.snap&&!disableSnap&&!shift,alignment:preferences.guides,axes:preferences.axes,gridSnap:preferences.gridSnap&&!disableSnap&&!shift,gridStep:preferences.gridStep});
+   delta=-result.dy;const frame=elementFrame(original.element,original.host);
+   feedback={...result,plane:{view:direction,depth:['front','back'].includes(direction)?frame.center.y:frame.center.x}};
    translateVertical(candidateFloor,drag.ids,delta);description='Перемещение по Z · '+fmt(delta*1000)+' мм';
   }else if(drag.handle==='view-plane'){
-   const delta=viewDelta(dx,dy,planDirection);translateSelection(candidateFloor,drag.ids,delta.x,delta.y);
+   const direction=drag.view;
+   const onlyAxis=shift?(Math.abs(dx)>Math.abs(dy)?'x':'y'):null;if(onlyAxis==='x')dy=0;if(onlyAxis==='y')dx=0;
+   const set=drag.projected[direction]??=viewSnapSet(sourceFloor,drag.ids,direction,sceneOptions());
+   const result=snapViewTranslation(sourceFloor,drag.ids,direction,dx,dy,tol,{set,onlyAxis,snap:preferences.snap&&!disableSnap,alignment:preferences.guides,axes:preferences.axes,gridSnap:preferences.gridSnap&&!disableSnap,gridStep:preferences.gridStep});
+   dx=result.dx;dy=result.dy;feedback=accurateFeedback({...result,plane:{view:direction,depth:drag.depth}},set.anchors.map(p=>({x:p.x+dx,y:p.y+dy})));
+   const delta=viewDelta(dx,dy,direction);if(delta.x||delta.y)translateSelection(candidateFloor,drag.ids,delta.x,delta.y);
    if(delta.z)translateVertical(candidateFloor,drag.ids,delta.z);description='Перемещение в плоскости вида';
   }else if(drag.handle==='rotate'){
    const center=elementFrame(original.element,original.host).center,initial=Math.atan2(drag.start.y-center.y,drag.start.x-center.x),current=Math.atan2(point.y-center.y,point.x-center.x),angle=elementAngle(original.element),raw=angle+(current-initial)*180/Math.PI;
@@ -946,11 +962,13 @@ $$('[data-view]').forEach(button=>button.addEventListener('click',()=>{section=f
 $$('[data-sidebar]').forEach(button=>button.addEventListener('click',()=>{$$('[data-sidebar]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',String(b===button));});$('project-panel').hidden=button.dataset.sidebar!=='project';$('library-panel').hidden=button.dataset.sidebar!=='library';}));
 $$('[data-collapse]').forEach(button=>button.addEventListener('click',()=>{const content=$(button.dataset.collapse);content.hidden=!content.hidden;button.setAttribute('aria-expanded',String(!content.hidden));button.querySelector('i').classList.toggle('rotated',content.hidden);}));
 $('undo').onclick=undo;$('redo').onclick=redo;$('copy-button').onclick=copySelected;$('delete-button').onclick=removeSelected;$('deselect-button').onclick=()=>select(null);
-$('plan-projection').onchange=()=>{setTool('select');planDirection=$('plan-projection').value;fitPlan();updateToolHint();};
-$('scene-projection').onchange=async()=>{await ensureScene();scene.setPreset($('scene-projection').value);$('model-container').querySelector('canvas')?.focus({preventScroll:true});};
+function choosePlanDirection(value){cancelElementDrag();setTool('select');planDirection=value;planCube?.setView(value);fitPlan();updateToolHint();}
+planCube=createViewCube($('plan-view-cube'),{plan:true,onView:choosePlanDirection});
+async function chooseSceneDirection(value){cancelElementDrag();sceneDirection=value;await ensureScene();scene.clearMovement();scene.setPreset(value);if(value==='orbit')scene.reset();sceneCube?.setView(value);$('model-container').querySelector('canvas')?.focus({preventScroll:true});}
+sceneCube=createViewCube($('scene-view-cube'),{onView:chooseSceneDirection});
 $('vertical-move-button').onclick=()=>{verticalMode=!verticalMode;$('vertical-move-button').classList.toggle('active',verticalMode);$('vertical-move-button').setAttribute('aria-pressed',String(verticalMode));setTool('select');};
 $('raise-button').onclick=()=>nudgeVertical(.05);$('lower-button').onclick=()=>nudgeVertical(-.05);
-$('zoom-in').onclick=()=>zoom(.8);$('zoom-out').onclick=()=>zoom(1.25);$('zoom-fit').onclick=fitPlan;$('scale-button').onclick=fitPlan;$('focus-button').onclick=()=>{fitPlan();scene?.reset();};$('reset-camera').onclick=()=>{$('scene-projection').value='orbit';scene?.setPreset('orbit');scene?.reset();};
+$('zoom-in').onclick=()=>zoom(.8);$('zoom-out').onclick=()=>zoom(1.25);$('zoom-fit').onclick=fitPlan;$('scale-button').onclick=fitPlan;$('focus-button').onclick=()=>{fitPlan();scene?.reset();};$('reset-camera').onclick=()=>chooseSceneDirection('orbit');
 for(const [id,key] of [['grid-button','grid'],['grid-snap-button','gridSnap'],['labels-button','labels'],['dimensions-button','dimensions'],['snap-button','snap'],['guides-button','guides']])$(id).onclick=()=>togglePreference(key);
 $('sidebar-toggle').onclick=()=>{document.querySelector('.app-shell').classList.toggle('sidebar-hidden');scene?.resize();};
 $('export-button').onclick=()=>menu('export-menu','export-button');$('project-menu-button').onclick=()=>menu('project-menu','project-menu-button');$$('[data-export]').forEach(button=>button.onclick=()=>exportProject(button.dataset.export));

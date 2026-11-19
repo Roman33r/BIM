@@ -63,5 +63,15 @@
 .tools-top{overflow:auto;min-height:0}
 .tools-top .tool{flex:none}
 @media(max-width:760px){.floor-controls select{max-width:120px}}
-.projection-select{max-width:130px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;padding:3px 6px;pointer-events:auto}
 #raise-button,#lower-button{font-size:11px;white-space:nowrap;min-width:32px}
+.view-cube{position:absolute;right:10px;top:35px;width:136px;height:147px;z-index:12;user-select:none;filter:drop-shadow(0 2px 4px #14243d18);font-family:Segoe UI,Arial,sans-serif}
+.view-cube svg{display:block;width:136px;height:143px;overflow:visible}
+.cube-face{cursor:pointer;outline:none}.cube-face polygon{fill:var(--panel,#fff);stroke:var(--secondary,#7b8798);stroke-width:1;stroke-linejoin:round}.cube-face text{font-size:6.5px;font-weight:700;fill:var(--secondary,#617084);pointer-events:none}
+.cube-face:hover polygon,.cube-face:focus polygon,.cube-face.active polygon{fill:#c7dbff;stroke:#2164ff}.cube-face.active text{fill:#2164ff}
+.cube-face-front polygon,.cube-face-back polygon{fill:#e7edf5}.cube-face-left polygon,.cube-face-right polygon{fill:#d7e0ec}.dark .cube-face polygon{fill:#374354}.cube-face:hover polygon,.cube-face:focus polygon,.cube-face.active polygon{fill:#c7dbff}
+.cube-axis{cursor:pointer;outline:none;--axis-color:#4389dc}.cube-axis-x{--axis-color:#d06161}.cube-axis-y{--axis-color:#62a66c}.cube-axis-z{--axis-color:#4389dc}
+.cube-axis path{fill:none;stroke:var(--axis-color);stroke-width:2;pointer-events:none}.cube-axis circle{fill:var(--panel,#fff);stroke:var(--axis-color);stroke-width:1.5}.cube-axis text{fill:var(--axis-color);font-size:9px;font-weight:650;pointer-events:none}.cube-axis.positive circle{fill:var(--axis-color)}.cube-axis.positive text{fill:#fff}.cube-axis:hover circle,.cube-axis:focus circle{stroke:#2164ff;stroke-width:3}
+.cube-home{position:absolute;left:0;bottom:2px;width:23px;height:23px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--secondary);font-size:18px;cursor:pointer}.cube-home:hover{color:#2164ff;border-color:#2164ff}
+.cube-caption{position:absolute;bottom:4px;left:26px;right:26px;text-align:center;font-size:10px;color:var(--secondary);pointer-events:none}
+.cube-opposite{cursor:pointer;outline:none}.cube-opposite rect{fill:var(--panel,#fff);stroke:var(--line,#cdd5e0)}.cube-opposite text{fill:var(--secondary,#667282);font-size:15px;pointer-events:none}.cube-opposite:hover rect,.cube-opposite:focus rect{stroke:#2164ff}
+.plan-pane .north-indicator,#reset-camera{display:none}

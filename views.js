@@ -1,4 +1,4 @@
-import {elementFootprint} from './transforms.js';
+import {elementFootprint,elementFrame} from './transforms.js';
 import {elementTilts,applyElementTilts,convexOutline} from './spatial.js';
 import {verticalRange,canMoveVertical} from './vertical.js';
 import {wallBlocks} from './model.js';
@@ -6,6 +6,7 @@ import {isPileCap,isRoundStructure,rimBoardSegments} from './structures.js';
 import {materialSpec} from './materials.js';
 import {capHoles,isRingFastener,isFastener} from './hardware.js';
 import {boardMountPoints} from './board-mounts.js';
+import {guidePoints,guideDash} from './construction-guides.js';
 
 export const VIEW_PRESETS={top:{name:'Сверху',direction:[0,1,0],up:[0,0,-1]},bottom:{name:'Снизу',direction:[0,-1,0],up:[0,0,1]},front:{name:'Спереди',direction:[0,0,1],up:[0,1,0]},back:{name:'Сзади',direction:[0,0,-1],up:[0,1,0]},left:{name:'Слева',direction:[-1,0,0],up:[0,1,0]},right:{name:'Справа',direction:[1,0,0],up:[0,1,0]}};
 export function projectView(p,view){
@@ -22,16 +23,43 @@ export function viewDelta(dx,dy,view){
  if(view==='left'||view==='right')return {x:0,y:dx*(view==='left'?1:-1),z:-dy};
  return {x:dx,y:dy,z:0};
 }
+export function unprojectView(p,view,depth=0){
+ if(view==='bottom')return {x:p.x,y:-p.y,z:depth};
+ if(view==='front')return {x:p.x,y:depth,z:-p.y};
+ if(view==='back')return {x:-p.x,y:depth,z:-p.y};
+ if(view==='left')return {x:depth,y:p.x,z:-p.y};
+ if(view==='right')return {x:depth,y:-p.x,z:-p.y};
+ return {x:p.x,y:p.y,z:depth};
+}
+export function feedbackForView(feedback,view){
+ if(!feedback.plane){
+  if(view==='top')return feedback;
+  if(view==='bottom'){const mirror=p=>({...p,y:-p.y});return {...feedback,guides:(feedback.guides||[]).map(g=>({...g,a:mirror(g.a),b:mirror(g.b)})),marker:feedback.marker?mirror(feedback.marker):null};}
+  return {};
+ }
+ if(feedback.plane.view===view)return feedback;
+ const convert=p=>projectView(unprojectView(p,feedback.plane.view,feedback.plane.depth),view);
+ return {...feedback,guides:(feedback.guides||[]).map(g=>({...g,a:convert(g.a),b:convert(g.b),component:undefined})),marker:feedback.marker?convert(feedback.marker):null};
+}
 export function cameraStep(keys,angle,delta,speed){
  let forward=Number(keys.has('KeyW'))-Number(keys.has('KeyS')),right=Number(keys.has('KeyD'))-Number(keys.has('KeyA')),up=Number(keys.has('KeyE'))-Number(keys.has('KeyQ'));
  const norm=Math.hypot(forward,right,up)||1,factor=Math.min(.05,Math.max(0,delta))*speed/norm;
  return {x:(-Math.sin(angle)*forward+Math.cos(angle)*right)*factor,y:up*factor,z:(-Math.cos(angle)*forward-Math.sin(angle)*right)*factor};
 }
+export function projectedElementAxes(floor,e,view,host){
+ const [bottom,top]=verticalRange(e,host),support=host||(e.type==='pileCap'?floor.structures.find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),frame=elementFrame(e,host),mid=(bottom+top)/2;
+ const project=(p,z)=>{const world=applyElementTilts({...p,z},tilts);return projectView({...world,z:world.z+floor.elevation},view);},center=project(frame.center,mid),axes=[];
+ for(const [p,z,extent] of [[{x:frame.center.x+frame.u.x,y:frame.center.y+frame.u.y},mid,frame.w/2+.3],[{x:frame.center.x+frame.v.x,y:frame.center.y+frame.v.y},mid,frame.h/2+.3],[frame.center,mid+1,(top-bottom)/2+.3]]){
+  const end=project(p,z),dx=end.x-center.x,dy=end.y-center.y,length=Math.hypot(dx,dy);
+  if(length>1e-7)axes.push({center,direction:{x:dx/length,y:dy/length},extent:extent*length,id:e.id});
+ }
+ return axes;
+}
 export function projectedElements(floor,view){
  const members=floor.structures||[],items=[...floor.walls,...floor.slabs,...floor.furniture,...members].map(element=>({element}));
  for(const wall of floor.walls)for(const element of wall.openings)items.push({element,host:wall});
  return items.filter(({element})=>canMoveVertical(element)).map(({element:e,host})=>{
-  const support=isPileCap(e)?members.find(p=>p.id===e.pileId):null,tilts=elementTilts(e,support),parts=[];
+  const support=host||(isPileCap(e)?members.find(p=>p.id===e.pileId):null),tilts=elementTilts(e,support),parts=[];
   const add=(footprint,bottom,top)=>parts.push(convexOutline(footprint.flatMap(p=>[bottom,top].map(z=>{
    const tilted=applyElementTilts({...p,z},tilts);return projectView({...tilted,z:tilted.z+floor.elevation},view);
   }))));
@@ -62,7 +90,7 @@ export function orthographicBounds(floors,view){
  return {x,y,w:Math.max(1,Math.max(...xs)-x+.4),h:Math.max(1,Math.max(...ys)-y+.4)};
 }
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
-export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,dark=false,grid=true,gridStep=.25,textures=true}={}){
+export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,dark=false,grid=true,gridStep=.25,textures=true,feedback={},bounds={x:-100,y:-100,w:200,h:200},axes=false,axisTypes}={}){
  let svg=`<defs><pattern id="elevation-grid" width="${gridStep}" height="${gridStep}" patternUnits="userSpaceOnUse"><path d="M${gridStep} 0H0V${gridStep}" stroke="${dark?'#405064':'#cdd5e0'}" fill="none" stroke-width=".7" vector-effect="non-scaling-stroke"/></pattern></defs>`;
  if(grid)svg+='<rect x="-10000" y="-10000" width="20000" height="20000" fill="url(#elevation-grid)"/>';
  for(const floor of floors)for(const {element:e,parts} of projectedElements(floor,view)){
@@ -72,6 +100,22 @@ export function renderOrthographic(floors,view,{selectedIds=new Set(),unit=.02,d
   const voids=holes.map(p=>`M${p.x+p.radius} ${-p.y}a${p.radius} ${p.radius} 0 1 0 ${-2*p.radius} 0a${p.radius} ${p.radius} 0 1 0 ${2*p.radius} 0Z`).join('');
   svg+=`<g data-element="${esc(e.id)}" class="orthographic-element" data-kind="${e.kind}">${parts.map(points=>holes.length?`<path d="M${points.map(p=>`${p.x} ${p.y}`).join('L')}Z${voids}" fill-rule="evenodd" ${attrs}/>`:`<polygon points="${points.map(p=>`${p.x},${p.y}`).join(' ')}" ${attrs}/>`).join('')}</g>`;
  }
+ for(const floor of floors)for(const guide of floor.construction||[]){
+  const points=guidePoints(guide).map(p=>projectView({...p,z:floor.elevation},view));if(!points.length)continue;
+  svg+=`<g class="projection-guide" pointer-events="none" fill="none" stroke="#bb7c31" stroke-width="1.2" vector-effect="non-scaling-stroke">${guide.type==='point'||Math.hypot(points[0].x-points.at(-1).x,points[0].y-points.at(-1).y)<1e-8?`<circle cx="${points[0].x}" cy="${points[0].y}" r="${3*unit}"/>`:`<polyline points="${points.map(p=>`${p.x},${p.y}`).join(' ')}" stroke-dasharray="${guideDash(guide.style)}"/>`}</g>`;
+ }
+ if(axes)for(const floor of floors)for(const {element:e,parts} of projectedElements(floor,view)){
+  if(e.showAxes===false||axisTypes?.[e.kind]===false||!parts.length)continue;
+  const host=floor.walls.find(w=>w.openings.some(o=>o.id===e.id));
+  for(const {center:c,direction:d,extent} of projectedElementAxes(floor,e,view,host))svg+=`<path d="M${c.x-d.x*extent} ${c.y-d.y*extent}L${c.x+d.x*extent} ${c.y+d.y*extent}" class="symmetry-axis" pointer-events="none"/>`;
+ }
+ const shown=feedbackForView(feedback,view);
+ for(const guide of shown.guides||[]){let {a,b}=guide;
+  if(guide.component==='x'){a={x:a.x,y:bounds.y};b={x:a.x,y:bounds.y+bounds.h};}
+  if(guide.component==='y'){a={x:bounds.x,y:a.y};b={x:bounds.x+bounds.w,y:a.y};}
+  svg+=`<path d="M${a.x} ${a.y}L${b.x} ${b.y}" class="alignment-guide${guide.axis?' axis-guide':''}" pointer-events="none"/>`;
+ }
+ if(shown.marker)svg+=`<g pointer-events="none" class="projected-snap-marker" data-snap-type="${esc(shown.label||'Привязка')}"><circle cx="${shown.marker.x}" cy="${shown.marker.y}" r="${5*unit}" fill="none" stroke="#087f76" stroke-width="2" vector-effect="non-scaling-stroke"/><text x="${shown.marker.x+9*unit}" y="${shown.marker.y-9*unit}" font-size="${11*unit}" fill="${dark?'#80e1d6':'#087f76'}">${esc(shown.label||'Привязка')}</text></g>`;
  return svg;
 }
 export function selectOrthographic(floor,view,rect){
@@ -83,5 +127,5 @@ export function selectOrthographic(floor,view,rect){
 }
 export function exportOrthographic(floors,view,options={}){
  const bounds=orthographicBounds(floors,view);
- return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="${Math.round(1200*bounds.h/bounds.w)}" viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}"><title>${VIEW_PRESETS[view].name}</title>${renderOrthographic(floors,view,{...options,grid:false,selectedIds:new Set()})}</svg>`;
+ return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="${Math.round(1200*bounds.h/bounds.w)}" viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}"><title>${VIEW_PRESETS[view].name}</title>${renderOrthographic(floors,view,{...options,grid:false,selectedIds:new Set(),feedback:{},axes:false})}</svg>`;
 }

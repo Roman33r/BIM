@@ -48,10 +48,12 @@ jobs:
           node --check board-mounts.js
           node --check vertical.js
           node --check views.js
+          node --check view-cube.js
+          node --check view-snapping.js
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js measurements.js spatial.js construction-guides.js pile-layout.js grid.js hardware.js board-mounts.js vertical.js views.js .nojekyll _site/
+          cp index.html styles.css interaction.css app.js model.js plan.js scene.js icons.js elements.js project-store.js furniture-plan.js furniture-scene.js transforms.js snapping.js editor-overlay.js selection.js annotations.js wall-overlaps.js materials.js structures.js measurements.js spatial.js construction-guides.js pile-layout.js grid.js hardware.js board-mounts.js vertical.js views.js view-cube.js view-snapping.js .nojekyll _site/
           cp -r assets vendor _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

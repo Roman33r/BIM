@@ -8,17 +8,18 @@ import {findElement} from './elements.js';
 import {angleGeometry,angleLabel} from './annotations.js';
 import {createMaterialTexture,materialSpec} from './materials.js';
 import {STRUCTURE_TYPES,isPileCap,isStructure,memberProfile,rimBoardSegments,screwBladeMesh,screwTipHeight} from './structures.js';
-import {elementTilts} from './spatial.js';
+import {elementTilts,applyElementTilts} from './spatial.js';
+import {verticalRange,canMoveVertical} from './vertical.js';
 import {guidePoints,guideStrokeSegments} from './construction-guides.js';
 import {selectedPileDimensions} from './pile-layout.js';
 import {isFastener,fastenerRange,capGeometry,fastenerObject} from './hardware.js';
 import {boardGeometry} from './board-mounts.js';
-import {VIEW_PRESETS,cameraStep} from './views.js';
+import {VIEW_PRESETS,cameraStep,projectView,unprojectView} from './views.js';
 export function createScene(container,onSelect,gestures={}){
  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
  renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','Редактируемая 3D-модель');container.append(renderer.domElement);
  const scene=new THREE.Scene(),perspective=new THREE.PerspectiveCamera(35,1,.01,2000),orthographic=new THREE.OrthographicCamera(-10,10,10,-10,.01,2000),group=new THREE.Group();const overlays=new THREE.Group();
- let camera=perspective,preset='orbit',lastFrame=0;const movementKeys=new Set();
+ let camera=perspective,preset='orbit',lastFrame=0,lastPose='';const movementKeys=new Set();
  scene.add(group,overlays);
  const marquee=document.createElement('div');
  marquee.className='selection-marquee';marquee.hidden=true;marquee.setAttribute('aria-hidden','true');
@@ -270,10 +271,12 @@ export function createScene(container,onSelect,gestures={}){
   if(opts.axes){
    const vertices=[];
    for(const {element,host} of axisElements(floor,opts)){
+    const [low,high]=verticalRange(element,host),z=(low+high)/2,support=host||(isPileCap(element)?floor.structures.find(e=>e.id===element.pileId):null),tilts=elementTilts(element,support);
+    const world=(p,height)=>{const value=applyElementTilts({...p,z:height},tilts);return new THREE.Vector3(value.x-6,floor.elevation+value.z,value.y-4.5);};
     for(const {center,direction,extent} of elementAxes(element,host)){
-     vertices.push(toScene({x:center.x-direction.x*extent,y:center.y-direction.y*extent}),
-      toScene({x:center.x+direction.x*extent,y:center.y+direction.y*extent}));
+     vertices.push(world({x:center.x-direction.x*extent,y:center.y-direction.y*extent},z),world({x:center.x+direction.x*extent,y:center.y+direction.y*extent},z));
     }
+    if(canMoveVertical(element)&&element.showAxes!==false){const {center}=elementFrame(element,host);vertices.push(world(center,low-.3),world(center,high+.3));}
    }
    if(vertices.length){
     const axes=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),
@@ -283,7 +286,15 @@ export function createScene(container,onSelect,gestures={}){
   }
   const guideBounds=new THREE.Box3().setFromObject(group);
   if(!guideBounds.isEmpty())ground.position.y=Math.min(ground.position.y,guideBounds.min.y-.08);
-  for(const guide of opts.feedback?.guides||[]){let a=guide.a,b=guide.b;if(guide.component==='x'){a={x:guide.a.x,y:guideBounds.min.z+3.5};b={x:guide.a.x,y:guideBounds.max.z+5.5};}if(guide.component==='y'){a={x:guideBounds.min.x+5,y:guide.a.y};b={x:guideBounds.max.x+7,y:guide.a.y};}guideLine(a,b,guide.axis?0x2696ad:0xbc43c5);}
+  const plane=opts.feedback?.plane;
+  if(plane&&!guideBounds.isEmpty()){
+   const corners=[];for(const x of [guideBounds.min.x,guideBounds.max.x])for(const y of [guideBounds.min.y,guideBounds.max.y])for(const z of [guideBounds.min.z,guideBounds.max.z])corners.push(projectView({x:x+6,y:z+4.5,z:y},plane.view));
+   const xs=corners.map(p=>p.x),ys=corners.map(p=>p.y),toWorld=p=>{const w=unprojectView(p,plane.view,plane.depth);return new THREE.Vector3(w.x-6,w.z,w.y-4.5);};
+   for(const guide of opts.feedback.guides||[]){let {a,b}=guide;if(guide.component==='x'){a={x:a.x,y:Math.min(...ys)-.5};b={x:a.x,y:Math.max(...ys)+.5};}if(guide.component==='y'){a={x:Math.min(...xs)-.5,y:a.y};b={x:Math.max(...xs)+.5,y:a.y};}
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([toWorld(a),toWorld(b)]),new THREE.LineDashedMaterial({color:guide.axis?0x2696ad:0xbc43c5,dashSize:.08,gapSize:.05,depthTest:false}));line.computeLineDistances();overlays.add(line);
+   }
+   if(opts.feedback.marker){const marker=new THREE.Mesh(new THREE.SphereGeometry(Math.max(.002,Math.min(.05,distance*.003)),12,8),new THREE.MeshBasicMaterial({color:0x087f76,depthTest:false}));marker.position.copy(toWorld(opts.feedback.marker));overlays.add(marker);}
+  }else for(const guide of opts.feedback?.guides||[]){let a=guide.a,b=guide.b;if(guide.component==='x'){a={x:guide.a.x,y:guideBounds.min.z+3.5};b={x:guide.a.x,y:guideBounds.max.z+5.5};}if(guide.component==='y'){a={x:guideBounds.min.x+5,y:guide.a.y};b={x:guideBounds.max.x+7,y:guide.a.y};}guideLine(a,b,guide.axis?0x2696ad:0xbc43c5);}
   scene.background=new THREE.Color(dark?0x1b2028:0xf7f8fa);ground.material.color.set(dark?0x202833:0xf3f5f7);if(fit)fitCamera();dirty=true;
  }
  function fitCamera(){const bounds=new THREE.Box3().setFromObject(group);if(bounds.isEmpty()){target.set(-6,(currentFloor?.elevation??0)+1,-4.5);distance=24;}else{bounds.getCenter(target);const size=bounds.getSize(new THREE.Vector3());distance=Math.max(.6,size.length()*1.5);}dirty=true;}
@@ -306,6 +317,7 @@ export function createScene(container,onSelect,gestures={}){
   }
   ground.visible=preset!=='bottom';
   camera.lookAt(target);renderer.render(scene,camera);
+  const pose=`${preset}:${angle.toFixed(3)}:${polar.toFixed(3)}`;if(pose!==lastPose){lastPose=pose;gestures.pose?.({preset,angle,polar});}
   const handle=rotationTarget&&transformHandles(rotationTarget,null,.035).find(h=>h.key==='rotate');
   rotationButton.hidden=true;
   if(handle){
@@ -333,6 +345,10 @@ export function createScene(container,onSelect,gestures={}){
   setRay(event,offsetX);
   const p=raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-planeY),new THREE.Vector3());
   return p?{x:p.x+6,y:p.z+4.5}:null;
+ }
+ function planePoint(event,view,origin,offsetX=0){
+  setRay(event,offsetX);const normal=new THREE.Vector3(...VIEW_PRESETS[view].direction),point=raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal,origin),new THREE.Vector3());
+  return point?projectView({x:point.x+6,y:point.z+4.5,z:point.y},view):null;
  }
  function selectInView(rect){
   const view=container.getBoundingClientRect(),byId=new Map();
@@ -384,7 +400,10 @@ export function createScene(container,onSelect,gestures={}){
    const planeY=hit?.point.y??currentFloor?.elevation??0,point=groundPoint(event,0,planeY)||(hit?{x:hit.point.x+6,y:hit.point.z+4.5}:null);
    if(id&&point&&!extend&&gestures.vertical?.()){
     const scale=camera.isOrthographicCamera?(camera.top-camera.bottom)/container.clientHeight:2*camera.position.distanceTo(hit.point)*Math.tan(camera.fov*Math.PI/360)/container.clientHeight;
-    const origin={...point,z:hit.point.y};drag={mode:'vertical',start,origin,scale};gestures.start?.(id,origin,'vertical');
+    const origin={...point,z:hit.point.y,view:preset==='orbit'?'front':preset};drag={mode:'vertical',start,origin,scale};gestures.start?.(id,origin,'vertical');
+   }else if(id&&point&&!extend&&preset!=='orbit'){
+    const origin=hit.point.clone(),projected=planePoint(event,preset,origin),depth=['top','bottom'].includes(preset)?hit.point.y:['front','back'].includes(preset)?hit.point.z+4.5:hit.point.x+6;
+    drag={mode:'view-plane',start,view:preset,origin};gestures.start?.(id,{...projected,view:preset,depth},'view-plane');
    }else if(id&&point&&!extend){
     drag={mode:'transform',start,planeY};
     gestures.start?.(id,point);
@@ -397,7 +416,10 @@ export function createScene(container,onSelect,gestures={}){
   const point=clientPoint(event),dx=point.x-drag.start.x,dy=point.y-drag.start.y;
   drag.active ||= Math.hypot(dx,dy)>=4;
   if(!drag.active)return;
-  if(drag.mode==='vertical'){
+  if(drag.mode==='view-plane'){
+   const point=planePoint(event,drag.view,drag.origin),adjacent=planePoint(event,drag.view,drag.origin,1);
+   if(point&&adjacent)gestures.move?.({...point,view:drag.view},event.shiftKey,event.altKey,Math.hypot(point.x-adjacent.x,point.y-adjacent.y));
+  }else if(drag.mode==='vertical'){
    gestures.move?.({...drag.origin,z:drag.origin.z-dy*drag.scale},event.shiftKey,event.altKey,drag.scale);
   }else if(drag.mode==='transform'){
    const world=groundPoint(event,0,drag.planeY),adjacent=groundPoint(event,1,drag.planeY);
@@ -415,7 +437,7 @@ export function createScene(container,onSelect,gestures={}){
    const hit=pick(event);
    gestures.context?.(event,hit?.object.userData.elementId,hit?{x:hit.point.x+6,y:hit.point.z+4.5}:null);
   }
-  if(gesture?.mode==='transform'||gesture?.mode==='vertical')gestures.end?.();
+  if(['transform','vertical','view-plane'].includes(gesture?.mode))gestures.end?.();
   if(gesture?.mode==='select'){
    if(gesture.active)gestures.selectMany?.(selectInView(selectionBounds(gesture.start,clientPoint(event))),gesture.extend);
    else if(gesture.id||!gesture.extend)onSelect(gesture.id,gesture.extend);
@@ -423,7 +445,7 @@ export function createScene(container,onSelect,gestures={}){
  });
  function cancelDrag(){
   const gesture=drag;drag=null;marquee.hidden=true;
-  if(gesture?.mode==='transform'||gesture?.mode==='vertical')gestures.cancel?.();
+  if(['transform','vertical','view-plane'].includes(gesture?.mode))gestures.cancel?.();
  }
  container.addEventListener('pointercancel',cancelDrag);
  container.addEventListener('lostpointercapture',cancelDrag);
